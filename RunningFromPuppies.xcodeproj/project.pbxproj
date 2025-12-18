@@ -16,6 +16,7 @@
 		8A0D783D2EF44C9A008BADF2 /* FixedStepDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D783C2EF44C9A008BADF2 /* FixedStepDriver.swift */; };
 		8A0D783F2EF44CB0008BADF2 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D783E2EF44CB0008BADF2 /* DebugLog.swift */; };
 		8A0D78492EF44F0F008BADF2 /* GameScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D78482EF44F0F008BADF2 /* GameScene.swift */; };
+		8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +30,7 @@
 		8A0D783C2EF44C9A008BADF2 /* FixedStepDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FixedStepDriver.swift; path = GameCore/FixedStepDriver.swift; sourceTree = SOURCE_ROOT; };
 		8A0D783E2EF44CB0008BADF2 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		8A0D78482EF44F0F008BADF2 /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
+		8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeInputCollector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -93,7 +95,6 @@
 			isa = PBXGroup;
 			children = (
 				8A0D78362EF44C50008BADF2 /* GameState.swift */,
-				8A0D78382EF44C61008BADF2 /* InputEvent.swift */,
 				8A0D783A2EF44C71008BADF2 /* GameCoreEngine.swift */,
 			);
 			path = GameCore;
@@ -134,6 +135,8 @@
 		8A0D78432EF44D50008BADF2 /* Input */ = {
 			isa = PBXGroup;
 			children = (
+				8A0D78382EF44C61008BADF2 /* InputEvent.swift */,
+				8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */,
 			);
 			path = Input;
 			sourceTree = "<group>";
@@ -248,6 +251,7 @@
 				8A0D78392EF44C61008BADF2 /* InputEvent.swift in Sources */,
 				8A0D781E2EF3786D008BADF2 /* ContentView.swift in Sources */,
 				8A0D78492EF44F0F008BADF2 /* GameScene.swift in Sources */,
+				8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */,
 				8A0D783D2EF44C9A008BADF2 /* FixedStepDriver.swift in Sources */,
 				8A0D78372EF44C50008BADF2 /* GameState.swift in Sources */,
 				8A0D781C2EF3786D008BADF2 /* RunningFromPuppiesApp.swift in Sources */,
@@ -269,8 +273,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RunningFromPuppies/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown";
@@ -303,8 +310,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RunningFromPuppies/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortraitUpsideDown";
