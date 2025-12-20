@@ -17,6 +17,8 @@
 		8A0D783F2EF44CB0008BADF2 /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D783E2EF44CB0008BADF2 /* DebugLog.swift */; };
 		8A0D78492EF44F0F008BADF2 /* GameScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D78482EF44F0F008BADF2 /* GameScene.swift */; };
 		8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */; };
+		8A0D784D2EF756B2008BADF2 /* StartScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */; };
+		8A0D784F2EF756EC008BADF2 /* GameHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784E2EF756EC008BADF2 /* GameHostView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +33,8 @@
 		8A0D783E2EF44CB0008BADF2 /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		8A0D78482EF44F0F008BADF2 /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
 		8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeInputCollector.swift; sourceTree = "<group>"; };
+		8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartScreenView.swift; sourceTree = "<group>"; };
+		8A0D784E2EF756EC008BADF2 /* GameHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHostView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -120,6 +124,8 @@
 			isa = PBXGroup;
 			children = (
 				8A0D781D2EF3786D008BADF2 /* ContentView.swift */,
+				8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */,
+				8A0D784E2EF756EC008BADF2 /* GameHostView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -252,7 +258,9 @@
 				8A0D781E2EF3786D008BADF2 /* ContentView.swift in Sources */,
 				8A0D78492EF44F0F008BADF2 /* GameScene.swift in Sources */,
 				8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */,
+				8A0D784F2EF756EC008BADF2 /* GameHostView.swift in Sources */,
 				8A0D783D2EF44C9A008BADF2 /* FixedStepDriver.swift in Sources */,
+				8A0D784D2EF756B2008BADF2 /* StartScreenView.swift in Sources */,
 				8A0D78372EF44C50008BADF2 /* GameState.swift in Sources */,
 				8A0D781C2EF3786D008BADF2 /* RunningFromPuppiesApp.swift in Sources */,
 			);

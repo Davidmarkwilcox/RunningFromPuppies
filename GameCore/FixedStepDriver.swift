@@ -70,9 +70,6 @@ final class FixedStepDriver {
         }
 
         onStateUpdated?(engine.state)
-
-
-        onStateUpdated?(engine.state)
     }
 }
 
