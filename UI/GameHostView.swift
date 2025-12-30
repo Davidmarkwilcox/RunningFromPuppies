@@ -53,6 +53,7 @@ struct GameHostView: View {
 
                 // Section 5: Apply UI-owned snapshot fields
                 engine.setViewWidth(Double(proxy.size.width))
+                engine.setViewHeight(Double(proxy.size.height))
                 engine.setActivePlayerId(activePlayerId)
 
                 // Section 6: Wire callbacks
@@ -61,11 +62,17 @@ struct GameHostView: View {
                 }
                 driver.drainInputEvents = { input.drain() }
 
+                // Route SpriteKit tap events into the same deterministic input queue.
+                scene.onInputEvent = { event in
+                    input.enqueue(event)
+                }
+
                 // Section 7: Start runtime
                 driver.start()
             }
             .onChange(of: proxy.size) { newSize in
                 engine.setViewWidth(Double(newSize.width))
+                engine.setViewHeight(Double(newSize.height))
                 scene.size = newSize
             }
             .onDisappear {

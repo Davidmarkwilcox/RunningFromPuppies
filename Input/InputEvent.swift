@@ -12,6 +12,7 @@ enum InputEvent: Equatable {
     case swipeRight
     case swipeUp
     case swipeDown
+    case tapPlayer
 }
 
 // End of InputEvent.swift
