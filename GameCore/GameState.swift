@@ -1,3 +1,11 @@
+// GameState_20251231-2348.swift
+// Defines the authoritative simulation state for Running From Puppies (GameCore). This state is read by rendering and mutated by GameCoreEngine.
+//
+// Sections:
+// 1. Imports
+// 2. Types
+// 3. Logic
+//
 // GameState.swift
 // GameCore
 // Authoritative simulation state for Running from Puppies.
@@ -20,6 +28,10 @@ enum PlayerAnim: String, Codable {
 
 // Section 3: GameState
 struct GameState {
+    // Scoring
+    var score: Int = 0
+    var scoreRemainder: Double = 0
+
     // Section 3.0: Debug Controls (default Off)
     //
     // Enable when troubleshooting to emit a lightweight log file in the app's temporary directory.
@@ -48,9 +60,22 @@ struct GameState {
     // Player horizontal position in world space (points)
     var playerX: Double = 0.0
 
+    // Player vertical offset from ground plane in world space (points).
+    // 0.0 means feet are on the ground. Positive values move the player upward.
+    var playerY: Double = 0.0
+
+    // Player vertical velocity in world space (points/second).
+    var playerVY: Double = 0.0
+
     // World time since start (seconds)
     var elapsedTime: Double = 0.0
 
+
+    // Level time since current level/run start (seconds)
+    var elapsedLevelTime: Double = 0.0
+
+    // Pause state (authoritative)
+    var isPaused: Bool = false
     // --- MPS-2: Camera/world model (authoritative) ---
     // cameraX is the left edge of the visible window in world space.
     var cameraX: Double = 0.0
@@ -69,7 +94,7 @@ struct GameState {
     var viewContentScale: Double = 1.0
 
     // Constant forward camera speed (points/sec).
-    var cameraSpeed: Double = 120.0
+    var cameraSpeed: Double = 90.0
 
     // --- MPS-5: Room strip model (authoritative) ---
     // Deterministic room sequence. Rendering uses these IDs to choose room art.
@@ -180,3 +205,4 @@ struct GameState {
 }
 
 // End of GameState.swift
+// End of GameState_20251231-2348.swift

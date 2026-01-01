@@ -44,11 +44,19 @@ final class GameScene: SKScene {
 
     // Player vertical placement
     // Bottom of sprite sits ~10% above bottom of screen.
-    private let playerGroundOffsetRatio: CGFloat = 0.10
+    private let playerGroundOffsetRatio: CGFloat = 0.00
 
     // Section 3.1: Input event sink (Rendering -> Input).
     // GameScene must never mutate GameCore state; it only emits InputEvents.
     var onInputEvent: ((InputEvent) -> Void)?
+
+    // Section 2.9: HUD (Timer + Pause)
+    private let hudNode = SKNode()
+    private let scoreLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+    private let timerLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+    private let pauseLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+    private let pauseHitTarget = SKShapeNode(rectOf: CGSize(width: 56, height: 40), cornerRadius: 8)
+    
 
     // Section 3.2: Rooms (3-room recycler; each room is a single 1536x1024 background image: Room_<RoomId>)
     private let roomsNode = SKNode()
@@ -68,6 +76,9 @@ final class GameScene: SKScene {
 
     override func didMove(to view: SKView) {
         backgroundColor = .black
+
+        // Section 2.9.1: HUD setup
+        setupHUD()
 
         // Section 3.0: Wall base layer (tiled Wall_1)
         wallNode.zPosition = -200
@@ -139,12 +150,129 @@ final class GameScene: SKScene {
     }
 
     // Section 4: Render from snapshot
+
+    // Section 2.9.2: Configure HUD nodes
+    private func setupHUD() {
+        hudNode.zPosition = 10_000
+        hudNode.name = "hudNode"
+        addChild(hudNode)
+
+        scoreLabel.fontSize = 22
+        scoreLabel.horizontalAlignmentMode = .right
+        scoreLabel.verticalAlignmentMode = .center
+        scoreLabel.fontColor = .white
+        scoreLabel.text = "Score: 0"
+        scoreLabel.name = "hud_scoreLabel"
+
+        timerLabel.fontSize = 22
+        timerLabel.horizontalAlignmentMode = .right
+        timerLabel.verticalAlignmentMode = .center
+        timerLabel.fontColor = .white
+        timerLabel.text = "00:00"
+        timerLabel.name = "hud_timerLabel"
+        hudNode.addChild(scoreLabel)
+        hudNode.addChild(timerLabel)
+
+        pauseLabel.fontSize = 22
+        pauseLabel.horizontalAlignmentMode = .center
+        pauseLabel.verticalAlignmentMode = .center
+        pauseLabel.fontColor = .white
+        pauseLabel.text = "⏸"
+        pauseLabel.name = "hud_pauseLabel"
+        hudNode.addChild(pauseLabel)
+
+        // Larger invisible hit target for reliable tapping.
+        pauseHitTarget.fillColor = .white
+        pauseHitTarget.strokeColor = .white
+        pauseHitTarget.alpha = 0.001
+        pauseHitTarget.zPosition = -1
+        pauseHitTarget.name = "hud_pauseHitTarget"
+        hudNode.addChild(pauseHitTarget)
+
+        layoutHUD()
+    }
+
+    // Section 2.9.3: Layout HUD (top-right)
+    private func layoutHUD() {
+        // Coordinate system: (0,0) bottom-left with default anchor; use scene size.
+        // NOTE: We deliberately inset from the right edge to avoid the HUD being too close to (or clipped by) the screen edge.
+        let topPadding: CGFloat = 18
+        let rightInset: CGFloat = 70   // keep HUD comfortably on-screen
+        let timerToPauseGap: CGFloat = 26
+        let scoreToTimerGap: CGFloat = 36 // breathing room between score and timer
+
+        let topY = size.height - topPadding
+
+        // Pause icon (top-right, inset)
+        let pauseX = size.width - rightInset
+        pauseLabel.position = CGPoint(x: pauseX, y: topY)
+
+        // Larger invisible hit target centered on the pause icon
+        pauseHitTarget.position = pauseLabel.position
+
+        // Timer sits to the left; timer label is right-aligned so it "grows" left as time increases
+        let timerRightX = pauseX - timerToPauseGap
+        timerLabel.position = CGPoint(x: timerRightX, y: topY)
+
+        // Score sits to the left of the timer.
+        // IMPORTANT: compute score's right edge based on the timer's rendered width to prevent overlap.
+        let timerWidth = max(10, timerLabel.frame.width)
+        let scoreRightX = timerRightX - timerWidth - scoreToTimerGap
+        scoreLabel.position = CGPoint(x: max(12, scoreRightX), y: topY)
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        layoutHUD()
+    }
+
+    // Section 2.9.5: HUD touch handling (pause / resume)
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        let location = touch.location(in: self)
+
+        // If the user taps the pause icon (or its hit target), emit a deterministic togglePause InputEvent.
+        let hitNodes = nodes(at: location)
+        let tappedPause = hitNodes.contains { node in
+            node.name == "hud_pauseHitTarget" || node.name == "hud_pauseLabel"
+        }
+
+        if tappedPause {
+            onInputEvent?(.togglePause)
+            return
+        }
+
+        // (Reserved) Other touch interactions can be added here later (e.g., tap player to stop).
+    }
+
+    // Section 2.9.4: HUD rendering
+    private func renderHUD(state: GameState) {
+        scoreLabel.text = "Score: \(state.score)"
+
+        timerLabel.text = formatTimeMMSS(state.elapsedLevelTime)
+        // When game is running, show pause icon; when paused, show play icon.
+        pauseLabel.text = state.isPaused ? "▶︎" : "⏸"
+        // Keep layout stable as label widths change (e.g., Score grows)
+        layoutHUD()
+
+    }
+
+    private func formatTimeMMSS(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        let mm = total / 60
+        let ss = total % 60
+        return String(format: "%02d:%02d", mm, ss)
+    }
+
     func render(state: GameState) {
         // 4.0) Base wall tiling is disabled in the single-background pipeline.
         //      Each room is now a full 1536x1024 (3:2) background image: Room_<RoomId>.
 
         // 4.1) Render rooms from snapshot (prev/current/next)
         renderRooms(state: state)
+
+        // 4.0.1) HUD overlay
+        renderHUD(state: state)
 
         // 4.1) Update visuals if player selection changed
         if state.activePlayerId != currentPlayerId {
@@ -166,7 +294,7 @@ final class GameScene: SKScene {
         // 4.4) Camera-relative positioning
         let screenX = state.playerX - state.cameraX
         let groundY = size.height * playerGroundOffsetRatio
-        let playerY = groundY + (playerSprite.size.height / 2)
+        let playerY = groundY + state.playerY + (playerSprite.size.height / 2)
         playerSprite.position = CGPoint(x: screenX, y: playerY)
     }
 

@@ -39,6 +39,15 @@ final class FixedStepDriver {
         let frameTime = link.timestamp - lastTimestamp
         lastTimestamp = link.timestamp
 
+
+        // Pause-safe fixed-step: while paused, do not accumulate frameTime (prevents catch-up burst).
+        if engine.state.isPaused {
+            accumulator = 0.0
+            let events = drainInputEvents?() ?? []
+            engine.step(deltaTime: 0.0, inputEvents: events)
+            onStateUpdated?(engine.state)
+            return
+        }
         frameCounter += 1
         if lastLogTime == 0 { lastLogTime = link.timestamp }
 

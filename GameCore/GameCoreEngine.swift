@@ -1,3 +1,11 @@
+// GameCoreEngine_20251231-2348.swift
+// Runs deterministic game simulation ticks (GameCore). Consumes InputEvents, advances timers/score, and updates GameState. Rendering reads state but does not mutate it.
+//
+// Sections:
+// 1. Imports
+// 2. Types
+// 3. Logic
+//
 // GameCoreEngine.swift
 // GameCore
 // Advances GameState using a fixed timestep.
@@ -32,6 +40,10 @@ final class GameCoreEngine {
     private let baseRunSpeed: Double = 180.0          // points/sec (player baseline)
     private let defaultCameraSpeed: Double = 120.0   // points/sec (camera baseline)
     private let impulseDistance: Double = 60.0        // points per swipe
+    // Jump tunables (world-space points, deterministic)
+    private let jumpVelocity: Double = 900.0          // points/sec (initial upward velocity)
+    private let gravity: Double = -2400.0             // points/sec^2 (downward acceleration)
+    private let maxFallSpeed: Double = -3000.0         // points/sec (terminal velocity clamp)
     private let backMargin: Double = 60.0             // points from camera left edge
     private let clampEpsilon: Double = 0.0001         // movement threshold (points)
 
@@ -42,134 +54,145 @@ final class GameCoreEngine {
     /// - Parameters:
     ///   - deltaTime: fixed timestep (seconds)
     ///   - inputEvents: edge-triggered input events captured since last tick
-    func step(deltaTime: Double, inputEvents: [InputEvent]) {
+    func step(deltaTime: Double, inputEvents: [InputEvent]) {        // Section 2.10: Pause gate. Process togglePause even while paused.
+        let didTogglePause = inputEvents.contains(.togglePause)
+        if didTogglePause {
+            state.isPaused.toggle()
+        }
+        if state.isPaused {
+            // While paused, do not advance simulation or accumulate additional state.
+            return
+        }
+
+        // Section 2.9: World & level timers (authoritative)
+        state.elapsedTime += deltaTime
+        state.elapsedLevelTime += deltaTime
+
+        // Section 2.9.1: Scoring (authoritative)
+        // v1 rule: +10 points per second survived. No accumulation while paused (handled by pause gate above).
+        // We accumulate fractional points deterministically using scoreRemainder.
+        state.scoreRemainder += deltaTime * 10.0
+        let wholePoints = Int(state.scoreRemainder)
+        if wholePoints > 0 {
+            state.score += wholePoints
+            state.scoreRemainder -= Double(wholePoints)
+        }
+
+
+        let filteredInputEvents = inputEvents.filter { $0 != .togglePause }
         // Section 3: Deterministic update order
         // 3.1) Capture previous state for derived presentation (idle/run)
         let previousPlayerX = state.playerX
 
-        // 3.2) Advance camera first (world reveal)
+        // 3.2) Apply input first so direction changes and hard stops take effect immediately.
+        apply(inputEvents: filteredInputEvents)
+
+        // 3.3) Advance camera (world reveal). If tap-stop is active, cameraSpeed will be 0.
         state.cameraX += state.cameraSpeed * deltaTime
 
-        // 3.3) Baseline player motion (auto-run)
+        // 3.4) Baseline player motion (auto-run follows facing direction)
         if !state.isIdleForcedByTap {
-            state.playerX += baseRunSpeed * deltaTime
+            let dir: Double = (state.playerFacing == .right) ? 1.0 : -1.0
+            state.playerX += dir * baseRunSpeed * deltaTime
         }
 
-        // 3.4) Apply input impulses
-        apply(inputEvents: inputEvents)
+        // 3.5) Vertical physics (jump + gravity)
+        integrateVertical(deltaTime: deltaTime)
 
-        // 3.5) Clamp player into camera-relative window
+        // 3.6) Clamp player into camera-relative window
         let wasClamped = clampPlayerToCameraWindow()
-        // 3.5.1) Derive room strip position (authoritative, deterministic)
-        updateRoomProgress()
 
-        // 3.6) Advance time last
-        state.elapsedTime += deltaTime
+        // 3.7) Derive room strip position (authoritative)
+        updateCurrentRoom()
 
-        // Section 4: MPS-3 presentation state (deterministic, snapshot-only)
-        // 4.1) Facing based on horizontal impulses this tick
-        updateFacing(from: inputEvents)
-
-        // 4.2) Idle/run based on movement this tick
-        updateAnim(previousPlayerX: previousPlayerX)
-
-        // Section 5: Debug logging (guarded)
-        if DebugLog.isEnabled {
-            if !inputEvents.isEmpty {
-                DebugLog.log(
-                    "step(dt=\(deltaTime)) inputs=\(inputEvents) " +
-                    "playerX=\(state.playerX) cameraX=\(state.cameraX) viewWidth=\(state.viewWidth) viewHeight=\(state.viewHeight)"
-                )
-            }
-            if wasClamped, debugLogClampEvents {
-                DebugLog.log("clamp applied: playerX=\(state.playerX) cameraX=\(state.cameraX) viewWidth=\(state.viewWidth)")
-            }
+        // 3.8) Derive facing from movement delta (unless clamped), for deterministic rendering
+        // Note: swipe left/right explicitly sets facing in apply(); this keeps facing correct for non-swipe forces.
+        let dx = state.playerX - previousPlayerX
+        if abs(dx) > 0.0001 && !wasClamped {
+            updateFacing(from: dx)
         }
+
+        // 3.9) Derive minimal anim state from movement + tap-stop
+        updateAnim(previousPlayerX: previousPlayerX)
     }
 
-    // Section 6: Input application
-    private func apply(inputEvents: [InputEvent]) {
+func apply(inputEvents: [InputEvent]) {
         guard !inputEvents.isEmpty else { return }
 
         for event in inputEvents {
             switch event {
-            case .swipeLeft:
-                // Resume motion if it was previously stopped by tap.
-                if state.isIdleForcedByTap {
-                    state.isIdleForcedByTap = false
-                    state.cameraSpeed = defaultCameraSpeed
-                }
-                state.playerX -= impulseDistance
-            case .swipeRight:
-                // Resume motion if it was previously stopped by tap.
-                if state.isIdleForcedByTap {
-                    state.isIdleForcedByTap = false
-                    state.cameraSpeed = defaultCameraSpeed
-                }
-                state.playerX += impulseDistance
-            case .tapPlayer:
-                // Gameplay rule: tap on player = immediate hard stop.
-                state.isIdleForcedByTap = true
-                state.cameraSpeed = 0.0
-                // Note: baseline run is skipped in step() when isIdleForcedByTap is true.
-            case .swipeUp, .swipeDown:
-                // Reserved for jump/crouch or lane changes later.
+
+            case .togglePause:
+                // Handled in step() pause gate; ignore here.
                 continue
-            }
-        }
-    }
 
-    // Section 6.5: Room strip derivation (MPS-5)
-    // Section 6.5: Room strip derivation (MPS-5)
-    private func updateRoomProgress() {
-        let ids = state.roomIds
-        let widths = state.roomWidths
+            case .swipeLeft:
+                // Gameplay contract (v1): swipe left turns the player and continues auto-run left.
+                // Also resumes motion if it was previously stopped by tap.
+                if state.isIdleForcedByTap {
+                    state.isIdleForcedByTap = false
+                    state.cameraSpeed = defaultCameraSpeed
+                }
+                state.playerFacing = .left
+                state.playerX -= impulseDistance
 
-        guard !ids.isEmpty, ids.count == widths.count else {
-            state.currentRoomIndex = 0
-            state.currentRoomOriginX = 0.0
-            return
-        }
+            case .swipeRight:
+                // Gameplay contract (v1): swipe right turns the player and continues auto-run right.
+                // Also resumes motion if it was previously stopped by tap.
+                if state.isIdleForcedByTap {
+                    state.isIdleForcedByTap = false
+                    state.cameraSpeed = defaultCameraSpeed
+                }
+                state.playerFacing = .right
+                state.playerX += impulseDistance
 
-        // Total “cycle” width for one full house pass.
-        let cycleWidth = widths.reduce(0.0, +)
-        guard cycleWidth > 0 else {
-            state.currentRoomIndex = 0
-            state.currentRoomOriginX = 0.0
-            return
-        }
+            case .swipeUp:
+                // Jump (v1): no mid-air control; no double jump.
+                if isGrounded() {
+                    state.playerVY = jumpVelocity
+                    GameState.debug("Jump triggered vy=\(jumpVelocity)")
+                } else {
+                    GameState.debug("Jump ignored (not grounded) y=\(state.playerY) vy=\(state.playerVY)")
+                }
 
-        // Position within the repeating cycle (wrap-safe).
-        // Note: playerX is expected to be >= 0 in the current design, but we handle negatives deterministically anyway.
-        var xInCycle = state.playerX.truncatingRemainder(dividingBy: cycleWidth)
-        if xInCycle < 0 { xInCycle += cycleWidth }
-
-        // Find which room contains xInCycle.
-        var cumulative = 0.0
-        var index = 0
-        for (i, w) in widths.enumerated() {
-            let next = cumulative + w
-            if xInCycle < next {
-                index = i
+            case .swipeDown:
+                // Reserved for slide/crouch (future). Ignored for now per v1 scope.
                 break
+
+            case .tapPlayer:
+                // Gameplay rule: tap on player = immediate hard stop (horizontal), camera stops too.
+                state.isIdleForcedByTap = true
+                GameState.debug("Tap stop triggered: cameraSpeed=0")
+
             }
-            cumulative = next
         }
-
-        state.currentRoomIndex = index
-
-        // World-space origin X for the current room tile:
-        // (start of the cycle containing playerX) + (start offset of this room within the cycle)
-        let cycleStartX = state.playerX - xInCycle
-        state.currentRoomOriginX = cycleStartX + cumulative
     }
 
-    // Section 7: Camera-relative clamp
-    @discardableResult
-    private func clampPlayerToCameraWindow() -> Bool {
-        // Target: player tops out at ~50% of visible width.
-        let frontMargin = state.viewWidth * 0.5
+    // Section 3.5: Vertical physics integration (jump + gravity)
+    private func integrateVertical(deltaTime: Double) {
+        // Apply gravity only when airborne or moving vertically.
+        guard !isGrounded() || abs(state.playerVY) > clampEpsilon else { return }
 
+        state.playerVY += gravity * deltaTime
+        if state.playerVY < maxFallSpeed { state.playerVY = maxFallSpeed }
+
+        state.playerY += state.playerVY * deltaTime
+
+        // Ground collision (simple ground plane at y=0)
+        if state.playerY <= 0.0 {
+            state.playerY = 0.0
+            state.playerVY = 0.0
+        }
+    }
+
+    // Section 3.5.1: Grounded check
+    private func isGrounded() -> Bool {
+        return state.playerY <= clampEpsilon && abs(state.playerVY) <= clampEpsilon
+    }
+
+private func clampPlayerToCameraWindow() -> Bool {
+        // Target: player tops out at ~50% of visible width.
+        let frontMargin: Double = 60.0  // allow player to approach the right edge
         let minPlayerX = state.cameraX + backMargin
         let maxPlayerX = state.cameraX + state.viewWidth - frontMargin
 
@@ -178,33 +201,40 @@ final class GameCoreEngine {
         return abs(state.playerX - original) > clampEpsilon
     }
 
+    // Section 6: Room Derivation (authoritative, deterministic)
+    private func updateCurrentRoom() {
+        // For MPS, treat every room as 1 unit wide. (Entryway 2x, etc. can be added later.)
+        // This keeps currentRoomIndex/currentRoomOriginX coherent for rendering and debug.
+        let roomWidth = state.oneUnitRoomWidth
+        guard roomWidth > 0, !state.roomIds.isEmpty else { return }
+
+        // Determine which room tile we are in based on playerX. Use floor for stable boundaries.
+        let logicalRoomIndex = Int(floor(state.playerX / roomWidth))
+
+        // Wrap into the canonical room type list.
+        let count = state.roomIds.count
+        let wrapped = ((logicalRoomIndex % count) + count) % count
+        state.currentRoomIndex = wrapped
+
+        // Origin is the world-space X at the left edge of the current logical room.
+        state.currentRoomOriginX = Double(logicalRoomIndex) * roomWidth
+    }
+
     // Section 8: Presentation state helpers (MPS-3)
-    private func updateFacing(from inputEvents: [InputEvent]) {
-        guard !inputEvents.isEmpty else { return }
+    private func updateFacing(from deltaX: Double) {
+        // Only adjust if there was meaningful movement and the player is not being hard-clamped by the camera window.
+        guard abs(deltaX) > clampEpsilon else { return }
 
-        // If both directions appear in the same tick, last one wins (deterministic by event order).
-        for event in inputEvents {
-            switch event {
-            case .swipeLeft:
-                state.hasReceivedUserMovementInput = true
-                if state.playerFacing != .left, DebugLog.isEnabled {
-                    DebugLog.log("playerFacing -> left")
-                }
-                state.playerFacing = .left
-
-            case .swipeRight:
-                state.hasReceivedUserMovementInput = true
-                if state.playerFacing != .right, DebugLog.isEnabled {
-                    DebugLog.log("playerFacing -> right")
-                }
-                state.playerFacing = .right
-
-            case .swipeUp, .swipeDown:
-                continue
-            case .tapPlayer:
-                // Tap does not affect facing.
-                continue
+        if deltaX > 0 {
+            if state.playerFacing != .right, DebugLog.isEnabled {
+                DebugLog.log("playerFacing -> right (movement)")
             }
+            state.playerFacing = .right
+        } else if deltaX < 0 {
+            if state.playerFacing != .left, DebugLog.isEnabled {
+                DebugLog.log("playerFacing -> left (movement)")
+            }
+            state.playerFacing = .left
         }
     }
 
@@ -237,3 +267,4 @@ final class GameCoreEngine {
 }
 
 // End of GameCoreEngine.swift
+// End of GameCoreEngine_20251231-2348.swift

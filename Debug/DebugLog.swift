@@ -5,8 +5,8 @@
 import Foundation
 
 enum DebugLog {
-    //static var isEnabled: Bool = false
-    static var isEnabled: Bool = true
+    static var isEnabled: Bool = false
+    //static var isEnabled: Bool = true
     
     private static let lock = NSLock()
     private static var buffer: [String] = []
