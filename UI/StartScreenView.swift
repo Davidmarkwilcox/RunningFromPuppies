@@ -14,7 +14,7 @@ struct StartScreenView: View {
 
     // Section 3: Player list (MPS-3)
     // NOTE: This is intentionally code-defined for now. Later, we can make this manifest-driven.
-    private let playerIds: [String] = ["Finley", "Sophia", "Isabella"]
+    private let playerIds: [String] = ["Finley", "Sophia", "Isabella", "Charlotte"]
 
     var body: some View {
         ZStack {

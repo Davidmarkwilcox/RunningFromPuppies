@@ -1,4 +1,4 @@
-// GameState_20251231-2348.swift
+// GameState_20260102-1720.swift
 // Defines the authoritative simulation state for Running From Puppies (GameCore). This state is read by rendering and mutated by GameCoreEngine.
 //
 // Sections:
@@ -175,7 +175,11 @@ struct GameState {
     // Useful for debugging and future tuning.
     var oneUnitRoomWidth: Double {
         guard viewHeight > 0, baseRoomPixelHeight > 0 else { return 0.0 }
-        return viewHeight * (baseRoomPixelWidthPerUnit / baseRoomPixelHeight)
+
+        // Keep sizing math consistent with roomWidths by converting runtime-provided pixel heights
+        // back into points when viewContentScale > 1 (retina).
+        let effectiveViewHeight = viewHeight / max(viewContentScale, 1.0)
+        return effectiveViewHeight * (baseRoomPixelWidthPerUnit / baseRoomPixelHeight)
     }
 
     // Derived each tick from playerX. 0-based index into roomIds, wrap-safe for infinite rooms.
@@ -205,4 +209,4 @@ struct GameState {
 }
 
 // End of GameState.swift
-// End of GameState_20251231-2348.swift
+// End of GameState_20260102-1720.swift

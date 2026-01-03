@@ -1,4 +1,5 @@
 // File: GameScene.swift
+// GameScene_20260102-1720.swift
 // Purpose: SpriteKit renderer that consumes immutable GameState snapshots and renders the world (single background per room + player visuals).
 // GameScene.swift
 // Rendering
@@ -419,21 +420,27 @@ final class GameScene: SKScene {
             roomTiles[tileIndex].background.alpha = (tex == nil) ? 0.0 : 1.0
         }
 
-        // Fit-to-height sizing, preserving the background's aspect ratio.
+        // Fit-to-height sizing:
+        // Rendering uses GameCore's roomWidth (source of truth) to avoid drift between
+        // logical indexing/origins and what is actually drawn.
         let h = CGFloat(height)
-        let aspect = roomBackgroundAspectRatioCache[assetName] ?? 1.5 // 1536/1024 default (3:2)
-        let w = h * aspect
-
         let bg = roomTiles[tileIndex].background
+
+        // Expected width based on texture aspect (diagnostics only).
+        let aspect = roomBackgroundAspectRatioCache[assetName] ?? 1.5 // 1536/1024 default (3:2)
+        let expectedW = h * aspect
+
+        // Authoritative rendered width (from GameCore).
+        let w = CGFloat(max(roomWidth, 0.0))
         bg.size = CGSize(width: w, height: h)
         bg.anchorPoint = CGPoint(x: 0.0, y: 0.0) // bottom-left
         bg.position = CGPoint(x: 0.0, y: 0.0)
 
-        // Diagnostics: warn if GameState's logical roomWidth differs materially from rendered width.
+        // Diagnostics: warn if the computed texture aspect differs materially from GameCore's roomWidth.
         if DebugLog.isEnabled {
-            let diff = abs(Double(w) - roomWidth)
+            let diff = abs(Double(expectedW) - roomWidth)
             if diff > 2.0 {
-                DebugLog.log("Room width mismatch for \(roomId): rendered=\(Double(w)) vs GameState=\(roomWidth) (diff=\(diff)).")
+                DebugLog.log("Room width mismatch for \(roomId): expectedFromAspect=\(Double(expectedW)) vs GameState=\(roomWidth) (diff=\(diff)).")
             }
         }
     }
@@ -530,7 +537,7 @@ final class GameScene: SKScene {
 
         // Keep uniform run-frame count across all players.
         // NOTE: This range should match your current agreed frame count.
-        let runNames = (1...8).map { "\(resolvedId)_run_\($0)" }
+        let runNames = (1...16).map { "\(resolvedId)_run_\($0)" }
 
         let idleTexture = SKTexture(imageNamed: idleName)
         let runTextures = runNames.map { SKTexture(imageNamed: $0) }
@@ -554,4 +561,4 @@ final class GameScene: SKScene {
 
 // GameScene.swift
 // End of File: GameScene.swift
-
+// End of GameScene_20260102-1720.swift

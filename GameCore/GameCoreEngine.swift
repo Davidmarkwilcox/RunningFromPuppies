@@ -1,4 +1,4 @@
-// GameCoreEngine_20251231-2348.swift
+// GameCoreEngine_20260102-1720.swift
 // Runs deterministic game simulation ticks (GameCore). Consumes InputEvents, advances timers/score, and updates GameState. Rendering reads state but does not mutate it.
 //
 // Sections:
@@ -17,6 +17,9 @@ import Foundation
 
 final class GameCoreEngine {
     private(set) var state = GameState()
+
+    // Section 1.0: Debug state
+    private var lastRoomIndexLogged: Int = -1
 
 
     // Section 1.1: UI/Runtime-owned snapshot fields
@@ -203,22 +206,71 @@ private func clampPlayerToCameraWindow() -> Bool {
 
     // Section 6: Room Derivation (authoritative, deterministic)
     private func updateCurrentRoom() {
-        // For MPS, treat every room as 1 unit wide. (Entryway 2x, etc. can be added later.)
-        // This keeps currentRoomIndex/currentRoomOriginX coherent for rendering and debug.
-        let roomWidth = state.oneUnitRoomWidth
-        guard roomWidth > 0, !state.roomIds.isEmpty else { return }
+        // Section 6.1: Room derivation uses the canonical per-room widths from GameState.
+        // This keeps GameCore room indexing/origins aligned with what rendering will display.
+        let ids = state.roomIds
+        let widths = state.roomWidths
 
-        // Determine which room tile we are in based on playerX. Use floor for stable boundaries.
-        let logicalRoomIndex = Int(floor(state.playerX / roomWidth))
+        guard !ids.isEmpty, ids.count == widths.count else { return }
 
-        // Wrap into the canonical room type list.
-        let count = state.roomIds.count
-        let wrapped = ((logicalRoomIndex % count) + count) % count
-        state.currentRoomIndex = wrapped
+        let loopLength = widths.reduce(0.0, +)
+        guard loopLength > 0.0 else { return }
 
-        // Origin is the world-space X at the left edge of the current logical room.
-        state.currentRoomOriginX = Double(logicalRoomIndex) * roomWidth
+        // Safe modulo for negatives.
+        func positiveModulo(_ x: Double, _ m: Double) -> Double {
+            let r = x.truncatingRemainder(dividingBy: m)
+            return (r >= 0.0) ? r : (r + m)
+        }
+
+        let xInLoop = positiveModulo(state.playerX, loopLength)
+
+        // Find the room index by walking cumulative widths.
+        var startOfRoomInLoop = 0.0
+        var idx = 0
+
+        for i in 0..<widths.count {
+            let w = widths[i]
+            // Treat the right edge as belonging to the next room to avoid flicker on boundaries.
+            if xInLoop < startOfRoomInLoop + w - 1e-9 {
+                idx = i
+                break
+            }
+            startOfRoomInLoop += w
+            idx = i
+        }
+
+        state.currentRoomIndex = idx
+
+        // World-space origin of the current room.
+        // Example: playerX = loopStart + xInLoop; origin = loopStart + startOfRoomInLoop.
+        let loopStartX = state.playerX - xInLoop
+        state.currentRoomOriginX = loopStartX + startOfRoomInLoop
+
+        // Debug snapshot (only when the room changes to keep logs readable).
+        if DebugLog.isEnabled, idx != lastRoomIndexLogged {
+            lastRoomIndexLogged = idx
+
+            let effectiveViewHeight = state.viewHeight / max(state.viewContentScale, 1.0)
+            let oneUnit = state.oneUnitRoomWidth
+            let thisWidth = widths[idx]
+
+            DebugLog.log(
+                "RoomDerive: idx=\(idx) id=\(ids[idx]) " +
+                "playerX=\(state.playerX.rounded()) camX=\(state.cameraX.rounded()) " +
+                "originX=\(state.currentRoomOriginX.rounded()) " +
+                "viewH=\(state.viewHeight) scale=\(state.viewContentScale) effH=\(effectiveViewHeight) " +
+                "oneUnit=\(oneUnit) roomW=\(thisWidth) loopLen=\(loopLength)"
+            )
+
+            // Flag if widths vary materially within the canonical list (future-proofing).
+            let minW = widths.min() ?? thisWidth
+            let maxW = widths.max() ?? thisWidth
+            if (maxW - minW) > 2.0 {
+                DebugLog.log("RoomDerive: NOTE roomWidths vary (min=\(minW), max=\(maxW)). Variable-width looping is active.")
+            }
+        }
     }
+
 
     // Section 8: Presentation state helpers (MPS-3)
     private func updateFacing(from deltaX: Double) {
@@ -267,4 +319,4 @@ private func clampPlayerToCameraWindow() -> Bool {
 }
 
 // End of GameCoreEngine.swift
-// End of GameCoreEngine_20251231-2348.swift
+// End of GameCoreEngine_20260102-1720.swift
