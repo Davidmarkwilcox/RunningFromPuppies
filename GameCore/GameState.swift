@@ -1,18 +1,21 @@
-// GameState_20260102-1720.swift
-// Defines the authoritative simulation state for Running From Puppies (GameCore). This state is read by rendering and mutated by GameCoreEngine.
+// File: GameState.swift
+// GameState_20260103-1500.swift
+// Purpose: Defines the authoritative, deterministic simulation state for Running From Puppies (GameCore).
+//          Rendering consumes immutable snapshots of this state and must never mutate it.
+//          This file is the single source of truth for simulation data (player, camera, rooms, active puppy, scoring, run phase).
 //
 // Sections:
 // 1. Imports
-// 2. Types
-// 3. Logic
+// 2. Presentation Enums (snapshot-only)
+// 3. Run / Puppy Enums (authoritative + snapshot)
+// 4. GameState (authoritative simulation state)
+// 5. Debug Logging (default Off)
 //
-// GameState.swift
-// GameCore
-// Authoritative simulation state for Running from Puppies.
-// This is the single source of truth for deterministic simulation snapshots consumed by rendering.
+// NOTE: Debug output is controlled by GameState.debugEnabled (default Off). When enabled, logs write to a temp file.
 //
-// Section 1: Data Model
+// End-of-file marker is included at the bottom.
 
+// Section 1: Imports
 import Foundation
 
 // Section 2: Presentation Enums (snapshot-only)
@@ -24,39 +27,38 @@ enum PlayerFacing: String, Codable {
 enum PlayerAnim: String, Codable {
     case idle
     case run
+    case captured   // v1: shown after puppy capture (player "lick reaction" / defeated pose)
 }
 
-// Section 3: GameState
+// Section 3: Run / Puppy Enums (authoritative + snapshot)
+enum RunPhase: String, Codable {
+    case playing
+    case captured
+}
+
+enum PuppyAnim: String, Codable {
+    case idle
+    case run
+    case lick
+}
+
+// Section 4: GameState
 struct GameState {
-    // Scoring
+    // -------------------------------------------------------------------------
+    // 4.1 Scoring (authoritative)
+    // -------------------------------------------------------------------------
     var score: Int = 0
     var scoreRemainder: Double = 0
 
-    // Section 3.0: Debug Controls (default Off)
-    //
-    // Enable when troubleshooting to emit a lightweight log file in the app's temporary directory.
-    // The renderer or UI can surface this file on demand if needed.
+    // -------------------------------------------------------------------------
+    // 4.2 Debug Controls (default Off)
+    // -------------------------------------------------------------------------
     static var debugEnabled: Bool = false
     static var debugLogURL: URL = FileManager.default.temporaryDirectory.appendingPathComponent("RunningFromPuppies_Debug.log")
 
-    static func debug(_ message: String) {
-        guard debugEnabled else { return }
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[GameState] \(stamp) \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: debugLogURL.path) {
-                if let handle = try? FileHandle(forWritingTo: debugLogURL) {
-                    defer { try? handle.close() }
-                    try? handle.seekToEnd()
-                    try? handle.write(contentsOf: data)
-                }
-            } else {
-                try? data.write(to: debugLogURL, options: [.atomic])
-            }
-        }
-    }
-
-    // --- Core simulation ---
+    // -------------------------------------------------------------------------
+    // 4.3 Core simulation: Player (authoritative)
+    // -------------------------------------------------------------------------
     // Player horizontal position in world space (points)
     var playerX: Double = 0.0
 
@@ -67,38 +69,44 @@ struct GameState {
     // Player vertical velocity in world space (points/second).
     var playerVY: Double = 0.0
 
-    // World time since start (seconds)
+    // World time since app start (seconds)
     var elapsedTime: Double = 0.0
-
 
     // Level time since current level/run start (seconds)
     var elapsedLevelTime: Double = 0.0
 
     // Pause state (authoritative)
     var isPaused: Bool = false
-    // --- MPS-2: Camera/world model (authoritative) ---
+
+    // -------------------------------------------------------------------------
+    // 4.4 Run lifecycle (authoritative)
+    // -------------------------------------------------------------------------
+    // v1: Level ends on capture. We keep a short deterministic post-capture window
+    // for lick/captured animation before the runtime transitions to the next level.
+    var runPhase: RunPhase = .playing
+    var postCaptureTime: Double = 0.0
+    var postCaptureDuration: Double = 1.0   // seconds (tunable)
+    var didJustCaptureThisTick: Bool = false
+
+    // -------------------------------------------------------------------------
+    // 4.5 Camera/world model (authoritative)
+    // -------------------------------------------------------------------------
     // cameraX is the left edge of the visible window in world space.
     var cameraX: Double = 0.0
 
-    // Width of the visible window (points). Runtime/UI should set this from actual view size.
+    // Width/height of visible window (points). Runtime/UI should set these from actual view size.
     var viewWidth: Double = 390.0
-
-    // Height of the visible window (points). Runtime/UI should set this from actual view size.
-    // NOTE: Room widths may be derived from this when using "fit height" room art.
     var viewHeight: Double = 844.0
 
-    // Content scale (e.g., UIScreen.main.scale).
-    // Set this from the runtime when populating GameState. If your runtime accidentally
-    // uses pixel dimensions for viewWidth/viewHeight, set viewContentScale to the device
-    // scale to convert back to points for deterministic sizing.
+    // Content scale (e.g., UIScreen.main.scale). Used to convert pixel dimensions back to points.
     var viewContentScale: Double = 1.0
 
     // Constant forward camera speed (points/sec).
     var cameraSpeed: Double = 90.0
 
-    // --- MPS-5: Room strip model (authoritative) ---
-    // Deterministic room sequence. Rendering uses these IDs to choose room art.
-    // Order is fixed and must not be mutated at runtime.
+    // -------------------------------------------------------------------------
+    // 4.6 Room strip model (authoritative)
+    // -------------------------------------------------------------------------
     let roomIds: [String] = [
         "Entryway",
         "Parlor",
@@ -114,23 +122,11 @@ struct GameState {
         "Library"
     ]
 
-    // Section 3.1: Room width derivation
-    //
-    // When room art is rendered using "fit height" (height matches the device screen), the
-    // effective world width of each room must be derived from the artwork's pixel aspect ratio
-    // and the runtime viewHeight.
-    //
-    // We encode room widths in "units" (1x or 2x) to preserve the design intent (e.g., Entryway
-    // is 2 units wide) while still deriving the actual world-point width deterministically.
-    //
-    // IMPORTANT:
-    // - baseRoomPixelHeight must match the master art height you generate (currently 1152 px).
-    // - baseRoomPixelWidthPerUnit must match the pixel width that corresponds to 1 unit (currently 1024 px).
-    // - A 2-unit room therefore has pixel width 2048 px.
+    // Artwork sizing contract (pixels)
     private let baseRoomPixelWidthPerUnit: Double = 1536
     private let baseRoomPixelHeight: Double = 1024
 
-    // Room width units (must match roomIds count/order). 2x rooms are encoded as 2.0.
+    // Room width units (must match roomIds count/order). v1 currently uses 1x rooms.
     private var roomWidthUnits: [Double] {
         [
             1, // Entryway
@@ -148,65 +144,92 @@ struct GameState {
         ]
     }
 
-    // Authoritative width of each room in world points.
-    // Rendering uses this for tiling; GameCore uses it to compute current room index/origin.
-    //
-    // Derived formula (per room): roomWidthPoints = viewHeightPoints * (roomPixelWidth / roomPixelHeight)
-    // where roomPixelWidth = baseRoomPixelWidthPerUnit * units.
+    // Authoritative width of each room in world points (derived from viewHeight and art aspect).
     var roomWidths: [Double] {
         guard viewHeight > 0, baseRoomPixelHeight > 0 else {
             return Array(repeating: 0.0, count: roomIds.count)
         }
 
-        // Convert to points if runtime provided pixel dimensions.
         let effectiveViewHeight = viewHeight / max(viewContentScale, 1.0)
-
-        // Fit-to-height sizing:
-        // widthPoints = viewHeightPoints * (roomPixelWidth / roomPixelHeight)
-        // For 1536x1024 art, aspect is 1.5 (3:2).
         let pxPerUnit = baseRoomPixelWidthPerUnit
         let pxH = baseRoomPixelHeight
+
         return roomWidthUnits.map { units in
             effectiveViewHeight * ((pxPerUnit * units) / pxH)
         }
     }
 
     // Convenience: the world-point width of a 1-unit room at the current viewHeight.
-    // Useful for debugging and future tuning.
     var oneUnitRoomWidth: Double {
         guard viewHeight > 0, baseRoomPixelHeight > 0 else { return 0.0 }
-
-        // Keep sizing math consistent with roomWidths by converting runtime-provided pixel heights
-        // back into points when viewContentScale > 1 (retina).
         let effectiveViewHeight = viewHeight / max(viewContentScale, 1.0)
         return effectiveViewHeight * (baseRoomPixelWidthPerUnit / baseRoomPixelHeight)
     }
 
-    // Derived each tick from playerX. 0-based index into roomIds, wrap-safe for infinite rooms.
+    // Derived each tick from playerX.
     var currentRoomIndex: Int = 0
-
-    // Derived each tick: the world-space X origin for the current room tile.
-    // Rendering can place the "current" room background at this X.
     var currentRoomOriginX: Double = 0.0
-    
-    // --- MPS-3: Player presentation selection + state (snapshot-only) ---
-    // Active player "skin" identifier used by rendering to pick textures (e.g., "Finley").
-    // UI/runtime owns this value; GameCore does not change it.
+
+    // -------------------------------------------------------------------------
+    // 4.7 Player presentation selection + state (snapshot-only)
+    // -------------------------------------------------------------------------
     var activePlayerId: String = "Finley"
-
-    // Player initially runs.
     var hasReceivedUserMovementInput: Bool = true
-    
-    // Facing direction for rendering (set deterministically by GameCore from inputs).
     var playerFacing: PlayerFacing = .right
-
-    // Minimal animation state for rendering (set deterministically by GameCore from movement).
     var playerAnim: PlayerAnim = .idle
-
-    // When true, GameCore forces idle + hard stop until a horizontal swipe resumes motion.
-    // Rendering consumes this only indirectly via playerAnim/camera/player motion in snapshots.
     var isIdleForcedByTap: Bool = false
+
+    // -------------------------------------------------------------------------
+    // 4.8 Puppy system (authoritative; single active puppy in v1)
+    // -------------------------------------------------------------------------
+    // Generic identity for behavior/asset selection (e.g., "Lilly", "Molly"...)
+    var activePuppyId: String = "Lilly"
+
+    // Puppy world-space kinematics
+    var puppyX: Double = -200.0
+    var puppyY: Double = 0.0
+    var puppyVY: Double = 0.0
+
+    // Puppy snapshot presentation
+    var puppyFacing: PlayerFacing = .right
+    var puppyAnim: PuppyAnim = .idle
+
+    // Deterministic PRNG state (seeded once per level/run; updated deterministically)
+    var rngState: UInt64 = 0xC0FFEE_1234_ABCD_56
+
+    // Spawn controls (tunable)
+    var puppyHasSpawnedThisLevel: Bool = false
+    var puppyMinSpawnDistance: Double = 220.0
+    var puppySpawnJitter: Double = 220.0
+    var puppySpawnAheadChance: Double = 0.5
+
+    // Capture tuning (world-space distance)
+    var captureRadius: Double = 58.0
+
+    // Lilly-style deterministic "random walk" decision segment
+    // puppyDecisionMode: -1 = left, 0 = idle, +1 = right
+    var puppyDecisionMode: Int = 0
+    var puppyDecisionTimeRemaining: Double = 0.0
+}
+
+// Section 5: Debug Logging helper (default Off)
+extension GameState {
+    static func debug(_ message: String) {
+        guard debugEnabled else { return }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[GameState] \(stamp) \(message)\n"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: debugLogURL.path) {
+                if let handle = try? FileHandle(forWritingTo: debugLogURL) {
+                    defer { try? handle.close() }
+                    try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                }
+            } else {
+                try? data.write(to: debugLogURL, options: [.atomic])
+            }
+        }
+    }
 }
 
 // End of GameState.swift
-// End of GameState_20260102-1720.swift

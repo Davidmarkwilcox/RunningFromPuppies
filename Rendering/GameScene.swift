@@ -1,99 +1,113 @@
 // File: GameScene.swift
-// GameScene_20260102-1720.swift
-// Purpose: SpriteKit renderer that consumes immutable GameState snapshots and renders the world (single background per room + player visuals).
-// GameScene.swift
-// Rendering
-// SpriteKit renderer consuming GameState snapshots.
-// Rendering must never mutate GameCore state.
+// GameScene_20260103-1538.swift
+// Purpose: SpriteKit renderer that consumes immutable GameState snapshots and renders the world (rooms + player + puppy + HUD).
+//          Rendering must never mutate GameCore state. Input is emitted as InputEvents via callbacks.
 //
-// This file owns the SpriteKit scene graph for the game runtime. It consumes immutable
-// GameState snapshots (from GameCoreEngine) and updates SpriteKit nodes accordingly.
-// It may emit InputEvents (e.g., tap on player) via callbacks, but must never mutate
-// GameCore state directly.
+// Sections:
+// 1. Imports
+// 2. Visual caches (Player/Puppy)
+// 3. Nodes (Rooms, Player, Puppy, HUD)
+// 4. Input handling (touch -> InputEvents)
+// 5. Render pipeline (rooms, HUD, entities)
+// 6. Asset helpers
 //
-// Section 1: Imports
+// End-of-file marker is included at the bottom.
 
+// Section 1: Imports
 import SpriteKit
 import UIKit
 
 final class GameScene: SKScene {
 
+    // -------------------------------------------------------------------------
     // Section 2: Visual cache
+    // -------------------------------------------------------------------------
     private struct PlayerVisuals {
         let idle: SKTexture
         let runFrames: [SKTexture]
         let runAction: SKAction
+
+        // Capture animation (Finley_capture_1 ... Finley_capture_9). Played when GameCore marks playerAnim == .captured.
+        let captureFrames: [SKTexture]
+        let captureAction: SKAction
     }
 
+    private struct PuppyVisuals {
+        let idle: SKTexture
+        let runFrames: [SKTexture]
+        let runAction: SKAction
+
+        // Lick animation (Puppy_<Id>_lick_1 ... Puppy_<Id>_lick_9). Played when GameCore marks puppyAnim == .lick.
+        let lickFrames: [SKTexture]
+        let lickAction: SKAction
+    }
+
+    // -------------------------------------------------------------------------
     // Section 2.1: Room tile model (single background per room; no paneling)
-    // Section 2.1: Room tile model (single background per room; no paneling)
+    // -------------------------------------------------------------------------
     private struct RoomTile {
         let container: SKNode
         let background: SKSpriteNode   // Full-room background: Room_<RoomId>
         var appliedRoomId: String      // For change detection
     }
 
-    // Section 2.2: Room background cache
+    // Room background caches
     private var roomBackgroundTextureCache: [String: SKTexture?] = [:]
     private var roomBackgroundAspectRatioCache: [String: CGFloat] = [:]  // texWidth/texHeight
 
-    private var visualsCache: [String: PlayerVisuals] = [:]
+    // Player visual caches
+    private var playerVisualsCache: [String: PlayerVisuals] = [:]
     private var currentPlayerId: String = ""
 
+    // Puppy visual caches
+    private var puppyVisualsCache: [String: PuppyVisuals] = [:]
+    private var currentPuppyId: String = ""
+
+    // -------------------------------------------------------------------------
     // Section 3: Nodes
+    // -------------------------------------------------------------------------
     private let playerSprite = SKSpriteNode()
+    private let puppySprite = SKSpriteNode()
 
-    // Player vertical placement
-    // Bottom of sprite sits ~10% above bottom of screen.
-    private let playerGroundOffsetRatio: CGFloat = 0.00
 
-    // Section 3.1: Input event sink (Rendering -> Input).
-    // GameScene must never mutate GameCore state; it only emits InputEvents.
+    // Section 3.0.1: Puppy visual scale (tunable). Requested: 1/3 size.
+    private let puppyScale: CGFloat = 1.0 / 2.0
+
+    // Player vertical placement (0 = bottom of screen). Keep consistent across entities.
+    private let groundOffsetRatio: CGFloat = 0.00
+
+    // Section 3.1: Input event sink (Rendering -> Input). Rendering must not mutate GameCore.
     var onInputEvent: ((InputEvent) -> Void)?
 
-    // Section 2.9: HUD (Timer + Pause)
+    // Section 3.1.1: UI callback for restarting after capture (Rendering -> Runtime).
+    // GameScene does not mutate GameCore; the host (GameHostView) can reset the engine/scene when invoked.
+    var onPlayAgain: (() -> Void)?
+
+    // Section 3.2: HUD (Timer + Score + Pause)
     private let hudNode = SKNode()
     private let scoreLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private let timerLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private let pauseLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private let pauseHitTarget = SKShapeNode(rectOf: CGSize(width: 56, height: 40), cornerRadius: 8)
-    
 
-    // Section 3.2: Rooms (3-room recycler; each room is a single 1536x1024 background image: Room_<RoomId>)
+    // Section 3.2.1: "Play Again" overlay (shown after capture)
+    private let playAgainNode = SKNode()
+    private let playAgainLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+    private let playAgainHitTarget = SKShapeNode(rectOf: CGSize(width: 180, height: 52), cornerRadius: 10)
+
+    // Section 3.3: Rooms (3-room recycler; each room is a single 1536x1024 background image: Room_<RoomId>)
     private let roomsNode = SKNode()
     private let roomTileCount = 3
     private var roomTiles: [RoomTile] = []
 
-    // Section 3.3: Wall tiling (legacy; disabled in single-background pipeline)
-    // Wall_1 is kept for reference but is not rendered.
-    private let wallNode = SKNode()
-    private let wallTileCount = 6  // sized to cover viewport with padding
-    private var wallTiles: [SKSpriteNode] = []
-    private var wallTexture: SKTexture? = nil
-    private var wallAspect: CGFloat = 0.0  // texWidth/texHeight
-
-    // Overlay sizing contract
-    // Overlays created from the 1536x1296 master with 432px top and bottom padding will be 432px tall.
-
+    // -------------------------------------------------------------------------
+    // Section 3.4: didMove (scene setup)
+    // -------------------------------------------------------------------------
     override func didMove(to view: SKView) {
         backgroundColor = .black
 
-        // Section 2.9.1: HUD setup
+        // HUD setup
         setupHUD()
-
-        // Section 3.0: Wall base layer (tiled Wall_1)
-        wallNode.zPosition = -200
-        addChild(wallNode)
-
-        // Create reusable wall tiles (infinite recycler)
-        wallTiles = (0..<wallTileCount).map { i in
-            let s = SKSpriteNode(color: .clear, size: .zero)
-            s.anchorPoint = CGPoint(x: 0.0, y: 0.5) // position.x = left edge
-            s.name = "wallTile_\(i)"
-            s.zPosition = -200
-            wallNode.addChild(s)
-            return s
-        }
 
         // Rooms render behind everything else.
         roomsNode.zPosition = -100
@@ -106,8 +120,6 @@ final class GameScene: SKScene {
             container.zPosition = -100
             roomsNode.addChild(container)
 
-            // Section 3.2.1: Room background sprite (single image per room; no paneling)
-            // Texture name: Room_<RoomId>
             let background = SKSpriteNode(color: .clear, size: .zero)
             background.anchorPoint = CGPoint(x: 0.0, y: 0.0) // left edge, bottom-aligned
             background.name = "roomTile_\(i)_background"
@@ -117,26 +129,36 @@ final class GameScene: SKScene {
             return RoomTile(container: container, background: background, appliedRoomId: "")
         }
 
-        // Enable SpriteKit touch handling for tap-to-idle.
+        // Enable SpriteKit touch handling for pause + player tap stop.
         isUserInteractionEnabled = true
 
-        // Default sprite setup; textures are applied during first render.
+        // Player sprite defaults; textures applied during first render.
         playerSprite.size = CGSize(width: 128, height: 128)
-        playerSprite.position = CGPoint(x: 0, y: (size.height * playerGroundOffsetRatio) + (playerSprite.size.height / 2))
+        playerSprite.position = CGPoint(x: 0, y: (size.height * groundOffsetRatio) + (playerSprite.size.height / 2))
         playerSprite.name = "player"
         playerSprite.zPosition = 0
         addChild(playerSprite)
+
+        // Puppy sprite defaults; textures applied during first render.
+        puppySprite.size = CGSize(width: 128, height: 128)
+        puppySprite.setScale(puppyScale)
+        puppySprite.position = CGPoint(x: -200, y: (size.height * groundOffsetRatio) + (puppySprite.frame.height / 2))
+        puppySprite.name = "puppy"
+        puppySprite.zPosition = 0
+        addChild(puppySprite)
     }
 
-    // Section 3.3: Touch handling (tap on player -> InputEvent.tapPlayer)
+    // -------------------------------------------------------------------------
+    // Section 4: Touch handling
+    // -------------------------------------------------------------------------
+
+    // 4.1: Tap on player -> InputEvent.tapPlayer (hard stop)
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
 
         let location = touch.location(in: self)
         let hitNodes = nodes(at: location)
-
-        // Emit tap only if the player sprite was tapped.
-        let tappedPlayer = hitNodes.contains { node in
+let tappedPlayer = hitNodes.contains { node in
             if node === playerSprite { return true }
             return node.name == "player"
         }
@@ -150,9 +172,25 @@ final class GameScene: SKScene {
         onInputEvent?(.tapPlayer)
     }
 
-    // Section 4: Render from snapshot
+    // 4.2: Pause toggle (tap hit target)
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        let location = touch.location(in: self)
 
-    // Section 2.9.2: Configure HUD nodes
+        let hitNodes = nodes(at: location)
+        let tappedPause = hitNodes.contains { node in
+            node.name == "hud_pauseHitTarget" || node.name == "hud_pauseLabel"
+        }
+
+        if tappedPause {
+            onInputEvent?(.togglePause)
+            return
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Section 5: HUD
+    // -------------------------------------------------------------------------
     private func setupHUD() {
         hudNode.zPosition = 10_000
         hudNode.name = "hudNode"
@@ -171,6 +209,7 @@ final class GameScene: SKScene {
         timerLabel.fontColor = .white
         timerLabel.text = "00:00"
         timerLabel.name = "hud_timerLabel"
+
         hudNode.addChild(scoreLabel)
         hudNode.addChild(timerLabel)
 
@@ -191,32 +230,65 @@ final class GameScene: SKScene {
         hudNode.addChild(pauseHitTarget)
 
         layoutHUD()
+        layoutPlayAgainOverlay()
     }
 
-    // Section 2.9.3: Layout HUD (top-right)
+
+    // -------------------------------------------------------------------------
+    // Section 5.1: Play Again overlay (shown after capture)
+    // -------------------------------------------------------------------------
+    private func setupPlayAgainOverlay() {
+        playAgainNode.zPosition = 10_010
+        playAgainNode.name = "playAgainNode"
+        addChild(playAgainNode)
+
+        // Label
+        playAgainLabel.fontSize = 26
+        playAgainLabel.horizontalAlignmentMode = .center
+        playAgainLabel.verticalAlignmentMode = .center
+        playAgainLabel.fontColor = .white
+        playAgainLabel.text = "Play Again"
+        playAgainLabel.name = "ui_playAgainLabel"
+        playAgainNode.addChild(playAgainLabel)
+
+        // Hit target (invisible but tappable)
+        playAgainHitTarget.fillColor = .clear
+        playAgainHitTarget.strokeColor = .clear
+        playAgainHitTarget.alpha = 1.0
+        playAgainHitTarget.zPosition = -1
+        playAgainHitTarget.name = "ui_playAgainHitTarget"
+        playAgainNode.addChild(playAgainHitTarget)
+
+        // Kept disabled; Play Again is hosted in SwiftUI.
+        playAgainNode.isHidden = true
+
+        layoutPlayAgainOverlay()
+    }
+
+    private func layoutPlayAgainOverlay() {
+        // Centered horizontally; placed ~25% down from top.
+        let centerX = size.width / 2.0
+        let y = size.height * 0.62
+        playAgainLabel.position = CGPoint(x: centerX, y: y)
+        playAgainHitTarget.position = playAgainLabel.position
+    }
+
     private func layoutHUD() {
-        // Coordinate system: (0,0) bottom-left with default anchor; use scene size.
-        // NOTE: We deliberately inset from the right edge to avoid the HUD being too close to (or clipped by) the screen edge.
         let topPadding: CGFloat = 18
-        let rightInset: CGFloat = 70   // keep HUD comfortably on-screen
+        let rightInset: CGFloat = 70
         let timerToPauseGap: CGFloat = 26
-        let scoreToTimerGap: CGFloat = 36 // breathing room between score and timer
+        let scoreToTimerGap: CGFloat = 36
 
         let topY = size.height - topPadding
 
-        // Pause icon (top-right, inset)
         let pauseX = size.width - rightInset
         pauseLabel.position = CGPoint(x: pauseX, y: topY)
 
-        // Larger invisible hit target centered on the pause icon
         pauseHitTarget.position = pauseLabel.position
 
-        // Timer sits to the left; timer label is right-aligned so it "grows" left as time increases
         let timerRightX = pauseX - timerToPauseGap
         timerLabel.position = CGPoint(x: timerRightX, y: topY)
 
-        // Score sits to the left of the timer.
-        // IMPORTANT: compute score's right edge based on the timer's rendered width to prevent overlap.
         let timerWidth = max(10, timerLabel.frame.width)
         let scoreRightX = timerRightX - timerWidth - scoreToTimerGap
         scoreLabel.position = CGPoint(x: max(12, scoreRightX), y: topY)
@@ -225,38 +297,17 @@ final class GameScene: SKScene {
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
         layoutHUD()
+        layoutPlayAgainOverlay()
     }
 
-    // Section 2.9.5: HUD touch handling (pause / resume)
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-        let location = touch.location(in: self)
-
-        // If the user taps the pause icon (or its hit target), emit a deterministic togglePause InputEvent.
-        let hitNodes = nodes(at: location)
-        let tappedPause = hitNodes.contains { node in
-            node.name == "hud_pauseHitTarget" || node.name == "hud_pauseLabel"
-        }
-
-        if tappedPause {
-            onInputEvent?(.togglePause)
-            return
-        }
-
-        // (Reserved) Other touch interactions can be added here later (e.g., tap player to stop).
-    }
-
-    // Section 2.9.4: HUD rendering
     private func renderHUD(state: GameState) {
         scoreLabel.text = "Score: \(state.score)"
-
         timerLabel.text = formatTimeMMSS(state.elapsedLevelTime)
-        // When game is running, show pause icon; when paused, show play icon.
         pauseLabel.text = state.isPaused ? "▶︎" : "⏸"
-        // Keep layout stable as label widths change (e.g., Score grows)
         layoutHUD()
-
-    }
+        // Play Again is hosted in SwiftUI (GameHostView). Keep SpriteKit overlay disabled.
+        playAgainNode.isHidden = true
+}
 
     private func formatTimeMMSS(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.rounded(.down)))
@@ -265,98 +316,61 @@ final class GameScene: SKScene {
         return String(format: "%02d:%02d", mm, ss)
     }
 
+    // -------------------------------------------------------------------------
+    // Section 6: Main render entry point
+    // -------------------------------------------------------------------------
     func render(state: GameState) {
-        // 4.0) Base wall tiling is disabled in the single-background pipeline.
-        //      Each room is now a full 1536x1024 (3:2) background image: Room_<RoomId>.
-
-        // 4.1) Render rooms from snapshot (prev/current/next)
+        // 6.1 Rooms (prev/current/next)
         renderRooms(state: state)
 
-        // 4.0.1) HUD overlay
+        // 6.2 HUD overlay
         renderHUD(state: state)
 
-        // 4.1) Update visuals if player selection changed
+        // 6.3 Player visuals (if selection changed)
         if state.activePlayerId != currentPlayerId {
-            applyVisuals(for: state.activePlayerId, anim: state.playerAnim)
+            applyPlayerVisuals(for: state.activePlayerId, anim: state.playerAnim)
         }
 
-        // 4.2) Apply facing (flip xScale)
-        let absScale = max(abs(playerSprite.xScale), 1.0)
-        switch state.playerFacing {
-        case .right:
-            playerSprite.xScale = absScale
-        case .left:
-            playerSprite.xScale = -absScale
+        // 6.4 Puppy visuals (if selection changed)
+        if state.activePuppyId != currentPuppyId {
+            applyPuppyVisuals(for: state.activePuppyId, anim: state.puppyAnim)
         }
 
-        // 4.3) Apply animation state changes
-        applyAnimationIfNeeded(anim: state.playerAnim)
+        // 6.5 Apply facing (flip xScale)
+        applyFacing(sprite: playerSprite, facing: state.playerFacing)
+        applyFacing(sprite: puppySprite, facing: state.puppyFacing)
 
-        // 4.4) Camera-relative positioning
-        let screenX = state.playerX - state.cameraX
-        let groundY = size.height * playerGroundOffsetRatio
+        // 6.6 Apply animation state changes (player + puppy)
+        applyPlayerAnimationIfNeeded(anim: state.playerAnim)
+        applyPuppyAnimationIfNeeded(anim: state.puppyAnim)
+
+        // 6.7 Camera-relative positioning (world -> screen)
+        let groundY = size.height * groundOffsetRatio
+
+        // Player
+        let playerScreenX = state.playerX - state.cameraX
         let playerY = groundY + state.playerY + (playerSprite.size.height / 2)
-        playerSprite.position = CGPoint(x: screenX, y: playerY)
+        playerSprite.position = CGPoint(x: playerScreenX, y: playerY)
+
+        // Puppy
+        let puppyScreenX = state.puppyX - state.cameraX
+        let puppyY = groundY + state.puppyY + (puppySprite.frame.height / 2)
+        puppySprite.position = CGPoint(x: puppyScreenX, y: puppyY)
     }
 
-    // Section 4.5: Rooms (snapshot-only consumption)
-
-    // Section 4.4.1: Base wall tiling (snapshot-only consumption)
-    private func renderWall(state: GameState) {
-        // Ensure Wall_1 texture is loaded once.
-        if wallTexture == nil {
-            if hasImageAsset(named: "Wall_1") {
-                let tex = SKTexture(imageNamed: "Wall_1")
-                wallTexture = tex
-                let ts = tex.size()
-                wallAspect = (ts.height > 0) ? (ts.width / ts.height) : 0.0
-
-                if DebugLog.isEnabled {
-                    DebugLog.log("Loaded Wall_1 texture. texSize=\(Int(ts.width))x\(Int(ts.height)) aspect=\(String(format: "%.4f", wallAspect))")
-                }
-            } else {
-                wallTexture = nil
-                wallAspect = 0.0
-
-                if DebugLog.isEnabled {
-                    DebugLog.log("Missing wall asset: Wall_1 (base wall will not render)")
-                }
-            }
-        }
-
-        guard let wallTexture, wallAspect > 0.0 else {
-            for t in wallTiles {
-                t.texture = nil
-                t.size = .zero
-            }
-            return
-        }
-
-        // Fit-height sizing: wall tile height matches scene height.
-        let h = size.height
-        let tileWidth = h * wallAspect
-        guard tileWidth > 1 else { return }
-
-        // Anchor tiling to world X=0 for stable seams.
-        let camX = state.cameraX
-        let leftWorldX = camX
-        let startWorldX = floor(leftWorldX / Double(tileWidth)) * Double(tileWidth) - Double(tileWidth)
-
-        // Render a fixed pool.
-        var worldX = startWorldX
-        for i in 0..<wallTiles.count {
-            let tile = wallTiles[i]
-            tile.texture = wallTexture
-            tile.color = .clear
-            tile.size = CGSize(width: tileWidth, height: h)
-
-            let screenX = worldX - camX
-            tile.position = CGPoint(x: screenX, y: h / 2.0)
-
-            worldX += Double(tileWidth)
+    private func applyFacing(sprite: SKSpriteNode, facing: PlayerFacing) {
+        let absScale = max(abs(sprite.xScale), 0.0001)
+        switch facing {
+        case .right:
+            sprite.xScale = absScale
+        case .left:
+            sprite.xScale = -absScale
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Section 6.1: Rooms rendering (snapshot-only consumption)
+    // -------------------------------------------------------------------------
     private func renderRooms(state: GameState) {
         let ids = state.roomIds
         let widths = state.roomWidths
@@ -380,37 +394,29 @@ final class GameScene: SKScene {
         let prevWidth = widths[prevIndex]
         let nextWidth = widths[nextIndex]
 
-        // World-space origins for the three tiles
         let currentOriginX = state.currentRoomOriginX
         let prevOriginX = currentOriginX - prevWidth
         let nextOriginX = currentOriginX + currentWidth
 
-        // Convert world-space to screen-space (camera-relative)
         let prevScreenX = prevOriginX - state.cameraX
         let currentScreenX = currentOriginX - state.cameraX
         let nextScreenX = nextOriginX - state.cameraX
 
-        // Height is full scene height; each room tile is a single image fit-to-height.
         let h = size.height
 
-        // Tile 0 = prev, Tile 1 = current, Tile 2 = next
         layoutRoomTile(tileIndex: 0, roomId: prevRoomId, screenOriginX: prevScreenX, roomWidth: prevWidth, height: h)
         layoutRoomTile(tileIndex: 1, roomId: currentRoomId, screenOriginX: currentScreenX, roomWidth: currentWidth, height: h)
         layoutRoomTile(tileIndex: 2, roomId: nextRoomId, screenOriginX: nextScreenX, roomWidth: nextWidth, height: h)
     }
 
-    // Section 4.6: Room tile layout + texture application
-    // Section 4.6: Room tile layout + texture application (single background image)
     private func layoutRoomTile(tileIndex: Int, roomId: String, screenOriginX: Double, roomWidth: Double, height: Double) {
         guard tileIndex >= 0, tileIndex < roomTiles.count else { return }
 
-        // Move the container so x=0 within the container corresponds to the room's left edge.
         roomTiles[tileIndex].container.position = CGPoint(x: screenOriginX, y: 0.0)
 
         let normalizedId = normalizeRoomIdForAsset(roomId)
         let assetName = "Room_\(normalizedId)"
 
-        // Only (re)bind texture when the room changes for this tile.
         if roomTiles[tileIndex].appliedRoomId != roomId {
             roomTiles[tileIndex].appliedRoomId = roomId
 
@@ -420,23 +426,17 @@ final class GameScene: SKScene {
             roomTiles[tileIndex].background.alpha = (tex == nil) ? 0.0 : 1.0
         }
 
-        // Fit-to-height sizing:
-        // Rendering uses GameCore's roomWidth (source of truth) to avoid drift between
-        // logical indexing/origins and what is actually drawn.
         let h = CGFloat(height)
         let bg = roomTiles[tileIndex].background
 
-        // Expected width based on texture aspect (diagnostics only).
-        let aspect = roomBackgroundAspectRatioCache[assetName] ?? 1.5 // 1536/1024 default (3:2)
+        let aspect = roomBackgroundAspectRatioCache[assetName] ?? 1.5
         let expectedW = h * aspect
 
-        // Authoritative rendered width (from GameCore).
         let w = CGFloat(max(roomWidth, 0.0))
         bg.size = CGSize(width: w, height: h)
-        bg.anchorPoint = CGPoint(x: 0.0, y: 0.0) // bottom-left
+        bg.anchorPoint = CGPoint(x: 0.0, y: 0.0)
         bg.position = CGPoint(x: 0.0, y: 0.0)
 
-        // Diagnostics: warn if the computed texture aspect differs materially from GameCore's roomWidth.
         if DebugLog.isEnabled {
             let diff = abs(Double(expectedW) - roomWidth)
             if diff > 2.0 {
@@ -445,13 +445,6 @@ final class GameScene: SKScene {
         }
     }
 
-
-    // Section 4.6.1: Room background (single image per room)
-    // Asset convention:
-    //   Room_<RoomId>_Overlay
-    // Example:
-    //   Room_Entryway_Overlay
-    // Section 4.7: Room texture loading (single background)
     private func loadRoomBackgroundTexture(assetName: String) -> SKTexture? {
         if let cached = roomBackgroundTextureCache[assetName] {
             return cached
@@ -480,85 +473,202 @@ final class GameScene: SKScene {
         }
     }
 
-    // Section 4.8: Room texture naming
-    // Asset convention:
-    //   Room_<RoomId>
-    // Examples:
-    //   Room_Entryway, Room_Hallway_1, Room_JackAndJill, Room_Livingroom
     private func normalizeRoomIdForAsset(_ roomId: String) -> String {
-        // With the new pipeline, GameState.roomIds are expected to already match asset suffixes.
-        // Keep this hook for any future normalization/mapping needs.
         return roomId
     }
 
-    // Section 4.9: Asset existence check
     private func hasImageAsset(named: String) -> Bool {
         return UIImage(named: named) != nil
     }
 
-    // Section 5: Visuals + animation
-    private func applyVisuals(for playerId: String, anim: PlayerAnim) {
+    // -------------------------------------------------------------------------
+    // Section 7: Player visuals + animation
+    // -------------------------------------------------------------------------
+    private func applyPlayerVisuals(for playerId: String, anim: PlayerAnim) {
         currentPlayerId = playerId
 
-        let visuals = loadVisuals(for: playerId)
+        let visuals = loadPlayerVisuals(for: playerId)
         playerSprite.texture = visuals.idle
 
-        // Reset actions to avoid cross-player action leakage
         playerSprite.removeAllActions()
         if anim == .run {
             playerSprite.run(visuals.runAction, withKey: "run")
+        } else if anim == .captured {
+            playerSprite.texture = visuals.captureFrames.first ?? visuals.idle
+            playerSprite.run(visuals.captureAction, withKey: "capture")
         }
     }
 
-    private func applyAnimationIfNeeded(anim: PlayerAnim) {
-        let visuals = loadVisuals(for: currentPlayerId.isEmpty ? "Finley" : currentPlayerId)
+    private func applyPlayerAnimationIfNeeded(anim: PlayerAnim) {
+        let visuals = loadPlayerVisuals(for: currentPlayerId.isEmpty ? "Finley" : currentPlayerId)
 
         switch anim {
         case .idle:
-            // Stop run loop if present; ensure idle texture is set.
             playerSprite.removeAction(forKey: "run")
             playerSprite.texture = visuals.idle
+
         case .run:
-            // Start run loop if not already running.
             if playerSprite.action(forKey: "run") == nil {
                 playerSprite.run(visuals.runAction, withKey: "run")
+            }
+
+        case .captured:
+            playerSprite.removeAction(forKey: "run")
+            // Play capture animation (9 frames) if not already running.
+            if playerSprite.action(forKey: "capture") == nil {
+                playerSprite.texture = visuals.captureFrames.first ?? visuals.idle
+                playerSprite.run(visuals.captureAction, withKey: "capture")
             }
         }
     }
 
-    // Section 6: Texture loading (safe fallback)
-    private func loadVisuals(for playerId: String) -> PlayerVisuals {
-        if let cached = visualsCache[playerId] { return cached }
+    private func loadPlayerVisuals(for playerId: String) -> PlayerVisuals {
+        if let cached = playerVisualsCache[playerId] { return cached }
 
-        // If assets for the requested player are missing, fall back to Finley.
-        let resolvedId = hasIdleAsset(for: playerId) ? playerId : "Finley"
+        let resolvedId = hasImageAsset(named: "\(playerId)_idle") ? playerId : "Finley"
 
         let idleName = "\(resolvedId)_idle"
-
-        // Keep uniform run-frame count across all players.
-        // NOTE: This range should match your current agreed frame count.
         let runNames = (1...16).map { "\(resolvedId)_run_\($0)" }
+        let captureNames = (1...9).map { "\(resolvedId)_capture_\($0)" }
 
         let idleTexture = SKTexture(imageNamed: idleName)
         let runTextures = runNames.map { SKTexture(imageNamed: $0) }
+
+        // Capture frames fallback: if not present, use idle as a single-frame animation.
+        let hasFirstCapture = hasImageAsset(named: captureNames.first ?? "")
+        let captureTextures: [SKTexture] = hasFirstCapture ? captureNames.map { SKTexture(imageNamed: $0) } : [idleTexture]
 
         let runAction = SKAction.repeatForever(
             SKAction.animate(with: runTextures, timePerFrame: 0.08, resize: false, restore: false)
         )
 
-        let visuals = PlayerVisuals(idle: idleTexture, runFrames: runTextures, runAction: runAction)
-        visualsCache[playerId] = visuals
+        // Play once then hold.
+        let captureAction = SKAction.sequence([
+            SKAction.animate(with: captureTextures, timePerFrame: 0.08, resize: false, restore: false),
+            SKAction.wait(forDuration: 9999)
+        ])
+
+        let visuals = PlayerVisuals(
+            idle: idleTexture,
+            runFrames: runTextures,
+            runAction: runAction,
+            captureFrames: captureTextures,
+            captureAction: captureAction
+        )
+        playerVisualsCache[playerId] = visuals
         return visuals
     }
 
-    private func hasIdleAsset(for playerId: String) -> Bool {
-        // Use UIKit to detect presence; SKTexture(imageNamed:) does not reliably indicate missing assets.
-        return UIImage(named: "\(playerId)_idle") != nil
+    // -------------------------------------------------------------------------
+    // Section 8: Puppy visuals + animation
+    // Asset convention (recommended):
+    //   Puppy_<PuppyId>_idle
+    //   Puppy_<PuppyId>_run_1 ... Puppy_<PuppyId>_run_16
+    //   Puppy_<PuppyId>_lick_1 ... Puppy_<PuppyId>_lick_9
+    // If assets are missing, a visible placeholder is used.
+    // -------------------------------------------------------------------------
+    private func applyPuppyVisuals(for puppyId: String, anim: PuppyAnim) {
+        currentPuppyId = puppyId
+
+        let visuals = loadPuppyVisuals(for: puppyId)
+        puppySprite.texture = visuals.idle
+
+        puppySprite.removeAllActions()
+        if anim == .run {
+            puppySprite.run(visuals.runAction, withKey: "puppy_run")
+        } else if anim == .lick {
+            puppySprite.run(visuals.lickAction, withKey: "puppy_lick")
+        }
+    }
+
+    private func applyPuppyAnimationIfNeeded(anim: PuppyAnim) {
+        let visuals = loadPuppyVisuals(for: currentPuppyId.isEmpty ? "Lilly" : currentPuppyId)
+
+        switch anim {
+        case .idle:
+            puppySprite.removeAction(forKey: "puppy_run")
+            puppySprite.removeAction(forKey: "puppy_lick")
+            puppySprite.texture = visuals.idle
+
+        case .run:
+            puppySprite.removeAction(forKey: "puppy_lick")
+            if puppySprite.action(forKey: "puppy_run") == nil {
+                puppySprite.run(visuals.runAction, withKey: "puppy_run")
+            }
+
+        case .lick:
+            puppySprite.removeAction(forKey: "puppy_run")
+            if puppySprite.action(forKey: "puppy_lick") == nil {
+                puppySprite.run(visuals.lickAction, withKey: "puppy_lick")
+            }
+        }
+    }
+
+    private func loadPuppyVisuals(for puppyId: String) -> PuppyVisuals {
+        if let cached = puppyVisualsCache[puppyId] { return cached }
+
+        let base = "Puppy_\(puppyId)"
+        let idleName = "\(base)_idle"
+        let runNames = (1...16).map { "\(base)_run_\($0)" }
+        let lickNames = (1...9).map { "\(base)_lick_\($0)" }
+
+        let hasIdle = hasImageAsset(named: idleName)
+
+        // If puppy art is missing, build a visible placeholder to avoid silent failures.
+        if !hasIdle {
+            if DebugLog.isEnabled {
+                DebugLog.log("Missing puppy idle asset: \(idleName) (using placeholder textures)")
+            }
+
+            // Placeholder textures: use colored squares generated from SKTexture via sprite color.
+            // We'll still use SKTexture(imageNamed:) to keep the pipeline simple; the sprite will fall back to color.
+            let placeholderIdle = SKTexture(imageNamed: idleName)
+            let placeholderRun = runNames.map { SKTexture(imageNamed: $0) }
+            let placeholderLick = lickNames.map { SKTexture(imageNamed: $0) }
+
+            let runAction = SKAction.repeatForever(
+                SKAction.animate(with: placeholderRun, timePerFrame: 0.08, resize: false, restore: false)
+            )
+            let lickAction = SKAction.sequence([
+            SKAction.animate(with: placeholderLick, timePerFrame: 0.08, resize: false, restore: false),
+            SKAction.wait(forDuration: 9999)
+        ])
+
+            // Make the sprite visible even if the textures are empty.
+            puppySprite.color = .white
+            puppySprite.colorBlendFactor = 1.0
+
+            let visuals = PuppyVisuals(
+                idle: placeholderIdle,
+                runFrames: placeholderRun,
+                runAction: runAction,
+                lickFrames: placeholderLick,
+                lickAction: lickAction
+            )
+            puppyVisualsCache[puppyId] = visuals
+            return visuals
+        }
+
+        // Normal path: real assets present
+        puppySprite.colorBlendFactor = 0.0
+
+        let idleTexture = SKTexture(imageNamed: idleName)
+        let runTextures = runNames.map { SKTexture(imageNamed: $0) }
+        let lickTextures = lickNames.map { SKTexture(imageNamed: $0) }
+
+        let runAction = SKAction.repeatForever(
+            SKAction.animate(with: runTextures, timePerFrame: 0.08, resize: false, restore: false)
+        )
+
+        let lickAction = SKAction.sequence([
+            SKAction.animate(with: lickTextures, timePerFrame: 0.08, resize: false, restore: false),
+            SKAction.wait(forDuration: 9999)
+        ])
+
+        let visuals = PuppyVisuals(idle: idleTexture, runFrames: runTextures, runAction: runAction, lickFrames: lickTextures, lickAction: lickAction)
+        puppyVisualsCache[puppyId] = visuals
+        return visuals
     }
 }
 
 // End of GameScene.swift
-
-// GameScene.swift
-// End of File: GameScene.swift
-// End of GameScene_20260102-1720.swift
