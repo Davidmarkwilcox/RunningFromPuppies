@@ -89,6 +89,19 @@ struct GameState {
     var didJustCaptureThisTick: Bool = false
 
     // -------------------------------------------------------------------------
+    // 4.4.1 Level progression (authoritative)
+    // -------------------------------------------------------------------------
+    // Current level number (1-based). Level advances automatically when the active puppy captures the player.
+    var currentLevel: Int = 1
+
+    // Cap for v1 progression.
+    var maxLevel: Int = 5
+
+    // Short banner shown at the start of each level (seconds remaining).
+    // Rendering may show "Level N - PuppyName" while this is > 0.
+    var levelBannerTimeRemaining: Double = 0.0
+
+    // -------------------------------------------------------------------------
     // 4.5 Camera/world model (authoritative)
     // -------------------------------------------------------------------------
     // cameraX is the left edge of the visible window in world space.

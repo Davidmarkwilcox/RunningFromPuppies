@@ -29,6 +29,17 @@ final class GameCoreEngine {
     // Section 2.2: Debug state
     private var lastRoomIndexLogged: Int = -1
 
+
+    // -------------------------------------------------------------------------
+    // Section 2.3: Initialization (authoritative defaults)
+    // -------------------------------------------------------------------------
+    init() {
+        // v1: Start at Level 1 with Lilly.
+        state.currentLevel = 1
+        state.activePuppyId = "Lilly"
+        state.levelBannerTimeRemaining = 2.0
+    }
+
     // -------------------------------------------------------------------------
     // Section 2.3: UI/Runtime-owned snapshot fields
     // -------------------------------------------------------------------------
@@ -53,12 +64,104 @@ final class GameCoreEngine {
     }
 
     // -------------------------------------------------------------------------
+    // Section 2.3.1: Run control (authoritative)
+    // -------------------------------------------------------------------------
+    /// Resets the entire run back to Level 1 (score/time cleared).
+    /// Runtime should call this for "Play Again" and when changing characters.
+    func resetRun(activePlayerId: String) {
+        // Preserve view sizing fields owned by the runtime.
+        let preservedViewWidth = state.viewWidth
+        let preservedViewHeight = state.viewHeight
+        let preservedScale = state.viewContentScale
+
+        state = GameState()
+        state.viewWidth = preservedViewWidth
+        state.viewHeight = preservedViewHeight
+        state.viewContentScale = preservedScale
+
+        state.currentLevel = 1
+        state.activePuppyId = puppyId(forLevel: 1)
+        state.levelBannerTimeRemaining = levelBannerDuration
+        state.activePlayerId = activePlayerId
+
+        // Ensure puppy will re-spawn deterministically.
+        state.puppyHasSpawnedThisLevel = false
+        state.puppyDecisionTimeRemaining = 0.0
+        state.puppyDecisionMode = 0
+
+        if DebugLog.isEnabled {
+            DebugLog.log("GameCoreEngine.resetRun(activePlayerId=\(activePlayerId)) -> Level 1 (\(state.activePuppyId))")
+        }
+    }
+
+    /// Advances to the next level while preserving score and overall elapsedTime.
+    /// Called automatically after capture to keep the run going (survival scoring).
+    func advanceToNextLevelAfterCapture() {
+        // Preserve cumulative metrics
+        let preservedScore = state.score
+
+        // Level cap gate (v1): do not advance past maxLevel.
+        guard state.currentLevel < state.maxLevel else {
+            if DebugLog.isEnabled {
+                DebugLog.log("AdvanceLevel: at cap level=\(state.currentLevel)/\(state.maxLevel) (no-op)")
+            }
+            return
+        }
+        let preservedScoreRemainder = state.scoreRemainder
+        let preservedElapsedTime = state.elapsedTime
+
+        // Increment level
+        state.currentLevel += 1
+        let nextPuppyId = puppyId(forLevel: state.currentLevel)
+
+        // Reset level-scoped state
+        state.runPhase = .playing
+        state.postCaptureTime = 0.0
+        state.didJustCaptureThisTick = false
+
+        state.elapsedLevelTime = 0.0
+        state.levelBannerTimeRemaining = levelBannerDuration
+
+        state.isIdleForcedByTap = false
+        state.cameraSpeed = defaultCameraSpeed
+
+        state.playerAnim = .idle
+        state.puppyAnim = .idle
+
+        // Swap puppy identity + force re-spawn on next tick.
+        setActivePuppyId(nextPuppyId)
+        state.puppyHasSpawnedThisLevel = false
+
+        // Restore cumulative metrics
+        state.score = preservedScore
+        state.scoreRemainder = preservedScoreRemainder
+        state.elapsedTime = preservedElapsedTime
+
+        if DebugLog.isEnabled {
+            DebugLog.log("AdvanceLevel: level=\(state.currentLevel) puppy=\(state.activePuppyId) score=\(state.score)")
+        }
+    }
+
+    // Section 2.3.2: Level-to-puppy mapping (v1)
+    private func puppyId(forLevel level: Int) -> String {
+        if level <= 1 { return puppyOrder.first ?? "Lilly" }
+        // With v1 puppyOrder currently [Lilly, Molly], keep using the last defined puppy for higher levels.
+        return puppyOrder.last ?? "Molly"
+    }
+
+
+    // -------------------------------------------------------------------------
     // Section 3: Tunables (deterministic constants)
     // -------------------------------------------------------------------------
     // Player
     private let baseRunSpeed: Double = 180.0          // points/sec (player baseline)
     private let defaultCameraSpeed: Double = 120.0    // points/sec (camera baseline)
     private let impulseDistance: Double = 60.0        // points per swipe
+
+
+    // Level/puppy progression (v1 survival: levels advance on capture)
+    private let levelBannerDuration: Double = 2.0
+    private let puppyOrder: [String] = ["Lilly", "Molly"] // Lilly remains Level 1 only for now
 
     // Jump
     private let jumpVelocity: Double = 900.0          // points/sec
@@ -108,6 +211,12 @@ final class GameCoreEngine {
         state.elapsedTime += deltaTime
         state.elapsedLevelTime += deltaTime
 
+
+        // Section 4.3.1: Level banner countdown (snapshot-only UI)
+        if state.levelBannerTimeRemaining > 0.0 {
+            state.levelBannerTimeRemaining = max(0.0, state.levelBannerTimeRemaining - deltaTime)
+        }
+
         // Section 4.4: Scoring (authoritative)
         // v1 rule: +10 points per second survived.
         state.scoreRemainder += deltaTime * 10.0
@@ -155,6 +264,11 @@ final class GameCoreEngine {
 
         // 4.6.9) Capture check (distance-based in world-space; jumping avoids capture naturally)
         evaluateCapture()
+
+        // 4.6.9.1) If capture occurred this tick, preserve captured presentation and skip facing/anim derivations.
+        if state.runPhase == .captured {
+            return
+        }
 
         // 4.6.10) Derive facing from movement delta (unless clamped)
         let dx = state.playerX - previousPlayerX
@@ -370,16 +484,32 @@ final class GameCoreEngine {
     }
 
     // Section 8.2: Per-puppy speed multiplier (v1 tuning)
+    // Contract:
+    // - Base puppy tuning multiplier per puppy personality
+    // - Multiplied by the global time-based ramp:
+    //     +10% at 60s, then +10% every 10s thereafter (infinite)
     private func puppySpeedMultiplier(for puppyId: String) -> Double {
+        let base: Double
         switch puppyId {
         case "Lilly":
-            return 1.05   // slightly faster than player base speed (tunable)
+            base = 1.05   // slightly faster than player base speed (tunable)
+        case "Molly":
+            base = 1.10   // modestly more capable chaser than Lilly (tunable)
         default:
-            return 1.00
+            base = 1.00
         }
+        return base * globalPuppyRampMultiplier(elapsedLevelTime: state.elapsedLevelTime)
     }
 
-    // Section 8.3: Spawn active puppy (deterministic "random" ahead/behind with min spacing)
+    // Section 8.2.1: Global time-based puppy speed ramp (infinite)
+    // +10% after the first minute, then +10% every 10 seconds after that.
+    private func globalPuppyRampMultiplier(elapsedLevelTime: Double) -> Double {
+        guard elapsedLevelTime >= 60.0 else { return 1.0 }
+        let steps = Int(floor((elapsedLevelTime - 60.0) / 10.0)) + 1
+        return 1.0 + (Double(steps) * 0.10)
+    }
+
+// Section 8.3: Spawn active puppy (deterministic "random" ahead/behind with min spacing)
     private func spawnActivePuppyIfNeeded() {
         guard !state.puppyHasSpawnedThisLevel else { return }
 
@@ -460,13 +590,17 @@ final class GameCoreEngine {
         switch state.activePuppyId {
         case "Lilly":
             updateLilly(deltaTime: deltaTime)
+
+        case "Molly":
+            updateMolly(deltaTime: deltaTime)
+
         default:
             // Safe fallback: behave like Lilly until other puppies are implemented
             updateLilly(deltaTime: deltaTime)
         }
     }
 
-    // Section 8.4.1: Lilly behavior
+// Section 8.4.1: Lilly behavior
     private func updateLilly(deltaTime: Double) {
         // Decide segment if needed
         state.puppyDecisionTimeRemaining -= deltaTime
@@ -513,7 +647,62 @@ final class GameCoreEngine {
         //}
     }
 
-    // Section 8.5: Capture evaluation (distance-based)
+    
+    // Section 8.4.2: Molly behavior
+    // v1 personality:
+    // - Ground-only (no jumping)
+    // - Targets the player with imperfect directional correction (deterministic noise)
+    // - Less idle than Lilly
+    private func updateMolly(deltaTime: Double) {
+        // Decide segment if needed
+        state.puppyDecisionTimeRemaining -= deltaTime
+        if state.puppyDecisionTimeRemaining <= 0.0 {
+            // Determine the "desired" direction toward the player.
+            let toward: Int
+            if state.playerX > state.puppyX + 1.0 {
+                toward = 1
+            } else if state.playerX < state.puppyX - 1.0 {
+                toward = -1
+            } else {
+                toward = 0
+            }
+
+            // Molly: mostly correct, occasionally wrong/idle.
+            // r in [0,9]
+            let r = Int(nextRNGUInt64() % 10)
+            if r == 0 {
+                state.puppyDecisionMode = 0                 // brief idle
+            } else if r <= 7 {
+                state.puppyDecisionMode = toward == 0 ? 0 : toward  // usually toward player
+            } else {
+                state.puppyDecisionMode = (toward == 0) ? 0 : -toward // occasionally wrong
+            }
+
+            // Duration: 0.35s .. 0.95s (more responsive than Lilly)
+            let duration = 0.35 + (nextRNGDouble01() * 0.60)
+            state.puppyDecisionTimeRemaining = duration
+
+            if DebugLog.isEnabled {
+                DebugLog.log("MollyDecision: mode=\(state.puppyDecisionMode) toward=\(toward) duration=\(String(format: "%.2f", duration))")
+            }
+        }
+
+        // Move horizontally only
+        let speed = baseRunSpeed * puppySpeedMultiplier(for: state.activePuppyId)
+        let dir = Double(state.puppyDecisionMode)
+
+        state.puppyX += dir * speed * deltaTime
+
+        // Facing/anim derived from motion mode
+        if state.puppyDecisionMode == 0 {
+            state.puppyAnim = .idle
+        } else {
+            state.puppyAnim = .run
+            state.puppyFacing = (state.puppyDecisionMode > 0) ? .right : .left
+        }
+    }
+
+// Section 8.5: Capture evaluation (distance-based)
     
 
     // Section 10.2: Clamp puppy to the player's current room bounds (v1 doorless)

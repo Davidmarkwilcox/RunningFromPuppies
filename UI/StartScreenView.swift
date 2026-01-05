@@ -46,7 +46,7 @@ struct StartScreenView: View {
                         .foregroundStyle(.white.opacity(0.95))
 
                     Picker("Player Selection", selection: $activePlayerId) {
-                        ForEach(playerIds, id: \ .self) { id in
+                        ForEach(playerIds, id: \.self) { id in
                             Text(id).tag(id)
                         }
                     }

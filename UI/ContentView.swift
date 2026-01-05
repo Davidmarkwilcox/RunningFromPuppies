@@ -1,4 +1,4 @@
-// ContentView.swift
+// File: ContentView.swift
 // UI
 // Root router for Running from Puppies.
 // Shows the StartScreenView initially, then transitions to GameHostView when Play is tapped.
@@ -28,6 +28,10 @@ struct ContentView: View {
                     isPlaying: $isPlaying
                 )
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .runningFromPuppiesQuitRequested)) { _ in
+            // Ensure Quit works even if GameHostView cannot dismiss itself (e.g., root router).
+            isPlaying = false
         }
     }
 }

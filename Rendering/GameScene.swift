@@ -504,10 +504,14 @@ let tappedPlayer = hitNodes.contains { node in
 
         switch anim {
         case .idle:
+            // Ensure we can replay capture on the next capture event.
+            playerSprite.removeAction(forKey: "capture")
             playerSprite.removeAction(forKey: "run")
             playerSprite.texture = visuals.idle
 
         case .run:
+            // Ensure we can replay capture on the next capture event.
+            playerSprite.removeAction(forKey: "capture")
             if playerSprite.action(forKey: "run") == nil {
                 playerSprite.run(visuals.runAction, withKey: "run")
             }
@@ -586,11 +590,13 @@ let tappedPlayer = hitNodes.contains { node in
 
         switch anim {
         case .idle:
-            puppySprite.removeAction(forKey: "puppy_run")
+            // Ensure we can replay lick on the next capture event.
             puppySprite.removeAction(forKey: "puppy_lick")
+            puppySprite.removeAction(forKey: "puppy_run")
             puppySprite.texture = visuals.idle
 
         case .run:
+            // Ensure we can replay lick on the next capture event.
             puppySprite.removeAction(forKey: "puppy_lick")
             if puppySprite.action(forKey: "puppy_run") == nil {
                 puppySprite.run(visuals.runAction, withKey: "puppy_run")

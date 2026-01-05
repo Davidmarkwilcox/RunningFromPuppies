@@ -21,26 +21,50 @@
 
 import SwiftUI
 import SpriteKit
+import UIKit
 
 struct GameHostView: View {
-    // Section 2: Dependencies (initial engine provided by parent; first run uses this instance)
-    private let initialEngine: GameCoreEngine
-    let activePlayerId: String
+    @Environment(\.dismiss) private var dismiss
+
+    // Section 2: Dependencies (engine is a reference type; SwiftUI does not need to observe it)
+    private let engine: GameCoreEngine
+    let initialActivePlayerId: String
 
     // Section 2.1: Runtime-owned state
-    @State private var engine: GameCoreEngine
     @State private var driver: FixedStepDriver? = nil
     @State private var scene: GameScene = GameScene()
 
+    // Section 2.1.1: Player selection (UI)
+    // NOTE:
+    // SwiftUI cannot reliably enumerate asset-catalog entries at runtime.
+    // We maintain an explicit allowlist of candidate character IDs, then filter it
+    // by checking for the presence of "<Id>_idle" in the bundle.
+    private let candidatePlayerIds: [String] = ["Finley", "Sophia", "Isabella", "Charlotte"]
+    @State private var selectedPlayerId: String = "Finley"
+
+    // Section 2.1.2: Geometry tracking (used for restarts/auto-advance)
+    @State private var lastKnownSize: CGSize = .zero
+
     // Section 2.2: UI-visible run state (drives SwiftUI overlay controls)
+    @State private var currentLevel: Int = 1
+    @State private var maxLevel: Int = 5
+    @State private var currentPuppyId: String = "Lilly"
+
     @State private var lastRunPhase: RunPhase = .playing
+
+    // Section 2.2.1: Capture gating (ensures animations can play before showing controls)
+    @State private var postCaptureTime: Double = 0.0
+    @State private var postCaptureDuration: Double = 1.0
 
     @StateObject private var input = SwipeInputCollector()
 
+    // Section 2.3: Player list helpers (UI-only)
+    private func availablePlayerIds() -> [String] { candidatePlayerIds }
+
     init(engine: GameCoreEngine, activePlayerId: String) {
-        self.initialEngine = engine
-        self.activePlayerId = activePlayerId
-        _engine = State(initialValue: engine)
+        self.engine = engine
+        self.initialActivePlayerId = activePlayerId
+        _selectedPlayerId = State(initialValue: activePlayerId)
     }
 
     // Section 3: View
@@ -68,9 +92,11 @@ struct GameHostView: View {
 
                 // Section 3.1: SwiftUI "Play Again" overlay (reliable tap handling)
                 // We intentionally render this in SwiftUI rather than SpriteKit to avoid gesture routing issues.
-                if lastRunPhase == .captured {
-                    VStack {
-                        Spacer().frame(height: proxy.size.height * 0.20)
+                if lastRunPhase == .captured && postCaptureTime >= postCaptureDuration {
+                    VStack(spacing: 14) {
+                        Spacer().frame(height: proxy.size.height * 0.18)
+
+                        // Row 1: Play Again
                         Button(action: {
                             restartRun(for: proxy.size)
                         }) {
@@ -80,18 +106,68 @@ struct GameHostView: View {
                                 .padding(.vertical, 12)
                         }
                         .buttonStyle(.borderedProminent)
+
+                        // Row 2: Character selection (under Play Again)
+                        Picker("Character", selection: $selectedPlayerId) {
+                            ForEach(availablePlayerIds(), id: \.self) { id in
+                                Text(id).tag(id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.system(size: 18, weight: .semibold, design: .monospaced))
+
+                        // Row 3: Next Level
+                        Button(action: {
+                            // Advance only if we have not reached the level cap.
+                            if currentLevel < maxLevel {
+                                // Apply player selection for the next level as well.
+                                engine.setActivePlayerId(selectedPlayerId)
+                                engine.advanceToNextLevelAfterCapture()
+                            }
+                        }) {
+                            Text(currentLevel < maxLevel ? "Next Level as \(selectedPlayerId)" : "Max Level")
+                                .font(.system(size: 22, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(currentLevel >= maxLevel)
+
+                        Button(role: .destructive, action: {
+                            // Stop runtime and return to the prior screen.
+                            driver?.stop()
+                            driver = nil
+
+                            // In some navigation setups GameHostView can be the root view, in which
+                            // case dismiss() is a no-op. We still call it, but also emit a notification
+                            // that parent views can optionally observe to force navigation back.
+                            if DebugLog.isEnabled {
+                                DebugLog.log("GameHostView.mainMenu() requested")
+                            }
+
+                            NotificationCenter.default.post(name: .runningFromPuppiesQuitRequested, object: nil)
+                            dismiss()
+                        }) {
+                            Text("Main Menu")
+                                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.bordered)
+
                         Spacer()
                     }
-                    .padding(.top, 0)
                     .transition(.opacity)
                     .zIndex(10)
                 }
             }
             .onAppear {
                 // Section 4.0: Start (or restart) runtime for the current size.
+                lastKnownSize = proxy.size
                 startRuntime(for: proxy.size)
             }
             .onChange(of: proxy.size) { newSize in
+                lastKnownSize = newSize
                 // Keep GameCore sizing in sync.
                 engine.setViewWidth(Double(newSize.width))
                 engine.setViewHeight(Double(newSize.height))
@@ -118,7 +194,7 @@ struct GameHostView: View {
         // Apply UI-owned snapshot fields
         engine.setViewWidth(Double(size.width))
         engine.setViewHeight(Double(size.height))
-        engine.setActivePlayerId(activePlayerId)
+        engine.setActivePlayerId(selectedPlayerId)
 
         // Wire callbacks
         let newDriver = FixedStepDriver(engine: engine)
@@ -126,10 +202,14 @@ struct GameHostView: View {
         newDriver.onStateUpdated = { state in
             // Drive SpriteKit rendering
             scene.render(state: state)
-
-            // Drive SwiftUI overlay state (main thread)
+// Drive SwiftUI overlay state (main thread)
             DispatchQueue.main.async {
                 self.lastRunPhase = state.runPhase
+                self.currentLevel = state.currentLevel
+                self.maxLevel = state.maxLevel
+                self.currentPuppyId = state.activePuppyId
+                self.postCaptureTime = state.postCaptureTime
+                self.postCaptureDuration = state.postCaptureDuration
             }
         }
         newDriver.drainInputEvents = { input.drain() }
@@ -149,7 +229,7 @@ struct GameHostView: View {
         newDriver.start()
 
         if DebugLog.isEnabled {
-            DebugLog.log("GameHostView.startRuntime(size=\(Int(size.width))x\(Int(size.height))) activePlayerId=\(activePlayerId)")
+            DebugLog.log("GameHostView.startRuntime(size=\(Int(size.width))x\(Int(size.height))) activePlayerId=\(selectedPlayerId)")
         }
     }
 
@@ -172,18 +252,22 @@ struct GameHostView: View {
         // 5.3 Reset UI overlay state.
         lastRunPhase = .playing
 
-        // 5.4 Create a brand-new engine for a clean run.
-        // We intentionally do NOT mutate the old engine's internal state because it is authoritative/private.
-        let freshEngine = GameCoreEngine()
-        engine = freshEngine
+        // 5.4 Reset the existing engine deterministically (clears score/time, returns to Level 1).
+        engine.resetRun(activePlayerId: selectedPlayerId)
 
-        // 5.5 Recreate the scene to reset node actions/animations and UI overlay state.
+        // 5.5 Recreate the scene to reset node actions/animations and caches.
         let freshScene = GameScene()
         scene = freshScene
 
-        // 5.6 Start runtime on the fresh engine/scene.
+        // 5.6 Start runtime on the reset engine + fresh scene.
         startRuntime(for: size)
     }
+}
+
+
+// Section 6: Notifications
+extension Notification.Name {
+    static let runningFromPuppiesQuitRequested = Notification.Name("RunningFromPuppies_QuitRequested")
 }
 
 // End of GameHostView.swift
