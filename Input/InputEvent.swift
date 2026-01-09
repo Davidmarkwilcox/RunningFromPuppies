@@ -11,6 +11,8 @@ enum InputEvent: Equatable {
     case swipeLeft
     case swipeRight
     case swipeUp
+    case swipeUpLeft
+    case swipeUpRight
     case swipeDown
     case tapPlayer
     case togglePause

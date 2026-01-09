@@ -372,6 +372,36 @@ final class GameCoreEngine {
                     GameState.debug("Jump ignored (not grounded) y=\(state.playerY) vy=\(state.playerVY)")
                 }
 
+            case .swipeUpLeft:
+                // Diagonal jump: set facing immediately and jump if grounded.
+                // Horizontal motion will be applied by the baseline movement system at baseRunSpeed.
+                if state.isIdleForcedByTap {
+                    state.isIdleForcedByTap = false
+                    state.cameraSpeed = defaultCameraSpeed
+                }
+                state.playerFacing = .left
+                if isGrounded() {
+                    state.playerVY = jumpVelocity
+                    GameState.debug("Jump (up-left) triggered vy=\(jumpVelocity)")
+                } else {
+                    GameState.debug("Jump (up-left) ignored (not grounded) y=\(state.playerY) vy=\(state.playerVY)")
+                }
+
+            case .swipeUpRight:
+                // Diagonal jump: set facing immediately and jump if grounded.
+                // Horizontal motion will be applied by the baseline movement system at baseRunSpeed.
+                if state.isIdleForcedByTap {
+                    state.isIdleForcedByTap = false
+                    state.cameraSpeed = defaultCameraSpeed
+                }
+                state.playerFacing = .right
+                if isGrounded() {
+                    state.playerVY = jumpVelocity
+                    GameState.debug("Jump (up-right) triggered vy=\(jumpVelocity)")
+                } else {
+                    GameState.debug("Jump (up-right) ignored (not grounded) y=\(state.playerY) vy=\(state.playerVY)")
+                }
+
             case .swipeDown:
                 // Reserved (slide/crouch) - out of scope for now
                 break
