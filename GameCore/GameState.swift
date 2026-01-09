@@ -1,5 +1,5 @@
 // File: GameState.swift
-// GameState_20260103-1500.swift
+// GameState_20260106-2045.swift
 // Purpose: Defines the authoritative, deterministic simulation state for Running From Puppies (GameCore).
 //          Rendering consumes immutable snapshots of this state and must never mutate it.
 //          This file is the single source of truth for simulation data (player, camera, rooms, active puppy, scoring, run phase).
@@ -223,6 +223,19 @@ struct GameState {
     // puppyDecisionMode: -1 = left, 0 = idle, +1 = right
     var puppyDecisionMode: Int = 0
     var puppyDecisionTimeRemaining: Double = 0.0
+
+    // Sadie+ jump behavior state (authoritative, deterministic)
+    // puppyJumpCooldownTimeRemaining: when <= 0 and puppy is grounded, AI may initiate a jump (Sadie and later puppies).
+    var puppyJumpCooldownTimeRemaining: Double = 0.0
+
+    // Georgia (Level 5) cute-pull behavior timers (authoritative, deterministic)
+    // georgiaCutePullCooldownRemaining: counts down to the next pull window.
+    // georgiaCutePullTimeRemaining: while > 0, player is pulled horizontally toward Georgia.
+    var georgiaCutePullCooldownRemaining: Double = 0.0
+    var georgiaCutePullTimeRemaining: Double = 0.0
+
+    // Georgia cute pull: configured duration for rendering the overlay animation (seconds)
+    var georgiaCutePullConfiguredDuration: Double = 0.7
 }
 
 // Section 5: Debug Logging helper (default Off)
@@ -235,7 +248,7 @@ extension GameState {
             if FileManager.default.fileExists(atPath: debugLogURL.path) {
                 if let handle = try? FileHandle(forWritingTo: debugLogURL) {
                     defer { try? handle.close() }
-                    try? handle.seekToEnd()
+                    _ = try? handle.seekToEnd()
                     try? handle.write(contentsOf: data)
                 }
             } else {
@@ -246,3 +259,4 @@ extension GameState {
 }
 
 // End of GameState.swift
+

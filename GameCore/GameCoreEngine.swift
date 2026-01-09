@@ -1,5 +1,5 @@
 // File: GameCoreEngine.swift
-// GameCoreEngine_20260103-1500.swift
+// GameCoreEngine_20260106-2045.swift
 // Purpose: Runs deterministic game simulation ticks (GameCore). Consumes InputEvents, advances timers/score,
 //          updates GameState for player/camera/rooms, and (v1) updates a single active puppy (enemy) with
 //          deterministic pseudo-random behavior.
@@ -61,6 +61,15 @@ final class GameCoreEngine {
         state.puppyHasSpawnedThisLevel = false
         state.puppyDecisionTimeRemaining = 0.0
         state.puppyDecisionMode = 0
+
+
+        // Sadie+ jump state is shared across puppies; reset on identity change to avoid inheriting cooldowns.
+        state.puppyJumpCooldownTimeRemaining = 0.0
+
+        // Georgia cute-pull timers are level-scoped; reset on identity change.
+        state.georgiaCutePullCooldownRemaining = 0.0
+        state.georgiaCutePullTimeRemaining = 0.0
+        state.georgiaCutePullConfiguredDuration = georgiaCutePullDuration
     }
 
     // -------------------------------------------------------------------------
@@ -144,8 +153,9 @@ final class GameCoreEngine {
 
     // Section 2.3.2: Level-to-puppy mapping (v1)
     private func puppyId(forLevel level: Int) -> String {
-        if level <= 1 { return puppyOrder.first ?? "Lilly" }
-        // With v1 puppyOrder currently [Lilly, Molly], keep using the last defined puppy for higher levels.
+        // v1: exactly one puppy per level (1-based). If level exceeds list, clamp to last.
+        let idx = max(0, level - 1)
+        if idx < puppyOrder.count { return puppyOrder[idx] }
         return puppyOrder.last ?? "Molly"
     }
 
@@ -161,13 +171,49 @@ final class GameCoreEngine {
 
     // Level/puppy progression (v1 survival: levels advance on capture)
     private let levelBannerDuration: Double = 2.0
-    private let puppyOrder: [String] = ["Lilly", "Molly"] // Lilly remains Level 1 only for now
+    private let puppyOrder: [String] = ["Lilly", "Molly", "Sadie", "Violet", "Georgia"] // v1 levels 1-5 (one puppy per level)
 
-    // Jump
+    // Jump (player)
     private let jumpVelocity: Double = 900.0          // points/sec
+
+    // Gravity (shared)
     private let gravity: Double = -2400.0             // points/sec^2
     private let maxFallSpeed: Double = -3000.0        // points/sec
     private let clampEpsilon: Double = 0.0001
+
+    // Jump (puppy: Sadie+)
+    // Sadie jumps are intentionally imperfect: randomized timing and slightly variable takeoff velocity.
+    private let sadieBaseJumpVelocity: Double = 820.0 // points/sec
+    private let sadieJumpVelocityJitterPct: Double = 0.22 // +/-22%
+    private let sadieJumpAttemptChance: Double = 0.65 // when cooldown expires and grounded
+    private let sadieJumpCooldownMin: Double = 0.70
+    private let sadieJumpCooldownMax: Double = 2.10
+    private let sadieNoJumpRetryMin: Double = 0.20
+    private let sadieNoJumpRetryMax: Double = 0.55
+
+    // Jump (puppy: Violet)
+    // Violet jumps are accurate and efficient (less randomness than Sadie).
+    private let violetBaseJumpVelocity: Double = 850.0 // points/sec
+    private let violetJumpVelocityJitterPct: Double = 0.10 // +/-10%
+    private let violetJumpAttemptChance: Double = 0.80
+    private let violetJumpCooldownMin: Double = 0.55
+    private let violetJumpCooldownMax: Double = 1.40
+    private let violetNoJumpRetryMin: Double = 0.18
+    private let violetNoJumpRetryMax: Double = 0.40
+
+    // Jump (puppy: Georgia)
+    // Georgia jumps are efficient and reliable (low variance) compared to Sadie/Violet.
+    private let georgiaBaseJumpVelocity: Double = 860.0 // points/sec
+    private let georgiaJumpVelocityJitterPct: Double = 0.08 // +/-8%
+    private let georgiaJumpAttemptChance: Double = 0.85
+    private let georgiaJumpCooldown: Double = 0.75 // seconds (fixed, per user request)
+    private let georgiaNoJumpRetry: Double = 0.20   // seconds (fixed)
+
+    // Georgia cute pull (Level 5)
+    // User-locked tuning: cooldown=6.0s, duration=0.7s, strength=100 points/sec.
+    private let georgiaCutePullCooldown: Double = 6.0
+    private let georgiaCutePullDuration: Double = 0.7
+    private let georgiaCutePullStrength: Double = 100.0
 
     // Camera window clamp
     private let backMargin: Double = 60.0
@@ -257,10 +303,21 @@ final class GameCoreEngine {
         spawnActivePuppyIfNeeded()
         updateActivePuppy(deltaTime: deltaTime)
 
+        // 4.6.7.1) Puppy vertical physics (Sadie+). Lilly/Molly remain grounded.
+        integratePuppyVertical(deltaTime: deltaTime)
+
         // 4.6.8) Constrain puppy to the same room AND the revealed camera window (doorless v1).
         //        This prevents "warp" when the player crosses room seams and makes the puppy obey the
         //        same revealed-boundary rules as the player (dragged forward on the left, restricted on the right).
         clampActivePuppyToCameraWindow()
+
+        // 4.6.8.1) Georgia (Level 5): periodically apply a deterministic horizontal "cute pull"
+        //          that biases the player toward Georgia.
+        applyGeorgiaCutePull(deltaTime: deltaTime)
+
+        // Re-apply camera window clamp and room derivation after pull.
+        _ = clampPlayerToCameraWindow()
+        updateCurrentRoom()
 
         // 4.6.9) Capture check (distance-based in world-space; jumping avoids capture naturally)
         evaluateCapture()
@@ -345,6 +402,26 @@ final class GameCoreEngine {
 
     private func isGrounded() -> Bool {
         return state.playerY <= clampEpsilon && abs(state.playerVY) <= clampEpsilon
+    }
+
+
+    // Section 6.1.1: Puppy vertical physics helpers (Sadie+)
+    private func integratePuppyVertical(deltaTime: Double) {
+        guard !isPuppyGrounded() || abs(state.puppyVY) > clampEpsilon else { return }
+
+        state.puppyVY += gravity * deltaTime
+        if state.puppyVY < maxFallSpeed { state.puppyVY = maxFallSpeed }
+
+        state.puppyY += state.puppyVY * deltaTime
+
+        if state.puppyY <= 0.0 {
+            state.puppyY = 0.0
+            state.puppyVY = 0.0
+        }
+    }
+
+    private func isPuppyGrounded() -> Bool {
+        return state.puppyY <= clampEpsilon && abs(state.puppyVY) <= clampEpsilon
     }
 
     private func clampPlayerToCameraWindow() -> Bool {
@@ -492,9 +569,15 @@ final class GameCoreEngine {
         let base: Double
         switch puppyId {
         case "Lilly":
-            base = 1.05   // slightly faster than player base speed (tunable)
+            base = 1.05   // slightly faster than player baseline (tunable)
         case "Molly":
-            base = 1.10   // modestly more capable chaser than Lilly (tunable)
+            base = 1.10   // capable ground chaser (tunable)
+        case "Sadie":
+            base = 1.16   // user request: a bit faster than Molly (tunable)
+        case "Violet":
+            base = 1.22   // placeholder until Violet personality is implemented
+        case "Georgia":
+            base = 1.25   // placeholder until Georgia personality is implemented
         default:
             base = 1.00
         }
@@ -593,6 +676,9 @@ final class GameCoreEngine {
 
         case "Molly":
             updateMolly(deltaTime: deltaTime)
+
+        case "Sadie":
+            updateSadie(deltaTime: deltaTime)
 
         default:
             // Safe fallback: behave like Lilly until other puppies are implemented
@@ -703,7 +789,294 @@ final class GameCoreEngine {
     }
 
 // Section 8.5: Capture evaluation (distance-based)
-    
+
+
+    // Section 8.4.3: Sadie behavior
+    // v1 personality:
+    // - Can jump (random timing)
+    // - Slightly faster than Molly (per tuning in puppySpeedMultiplier)
+    // - Jumps are imperfect/over-eager (often jumps when not needed)
+    private func updateSadie(deltaTime: Double) {
+        // Horizontal targeting similar to Molly, but more "excited" (less idle).
+        state.puppyDecisionTimeRemaining -= deltaTime
+        if state.puppyDecisionTimeRemaining <= 0.0 {
+            let toward: Int
+            if state.playerX > state.puppyX + 1.0 {
+                toward = 1
+            } else if state.playerX < state.puppyX - 1.0 {
+                toward = -1
+            } else {
+                toward = 0
+            }
+
+            // Sadie: usually toward, sometimes wrong, rarely idle.
+            let r = Int(nextRNGUInt64() % 20) // 0..19
+            if r == 0 {
+                state.puppyDecisionMode = 0
+            } else if r <= 15 {
+                state.puppyDecisionMode = toward == 0 ? 0 : toward
+            } else {
+                state.puppyDecisionMode = (toward == 0) ? 0 : -toward
+            }
+
+            // Duration: 0.25s .. 0.75s (very reactive)
+            let duration = 0.25 + (nextRNGDouble01() * 0.50)
+            state.puppyDecisionTimeRemaining = duration
+
+            if DebugLog.isEnabled {
+                DebugLog.log("SadieDecision: mode=\(state.puppyDecisionMode) toward=\(toward) duration=\(String(format: "%.2f", duration))")
+            }
+        }
+
+        // Random jumps (deterministic via GameCore RNG).
+        // Contract: when grounded and cooldown expires, Sadie may jump. Jump timing is not obstacle-driven in v1.
+        state.puppyJumpCooldownTimeRemaining = max(0.0, state.puppyJumpCooldownTimeRemaining - deltaTime)
+
+        if isPuppyGrounded() && state.puppyJumpCooldownTimeRemaining <= 0.0 {
+            let roll = nextRNGDouble01()
+            if roll < sadieJumpAttemptChance {
+                // Apply a jittered takeoff velocity to create "imperfect" jump profiles.
+                let jitter = (nextRNGDouble01() * 2.0 - 1.0) * sadieJumpVelocityJitterPct
+                let vy = sadieBaseJumpVelocity * (1.0 + jitter)
+
+                state.puppyVY = vy
+
+                // New cooldown after a successful jump
+                let cd = sadieJumpCooldownMin + (nextRNGDouble01() * (sadieJumpCooldownMax - sadieJumpCooldownMin))
+                state.puppyJumpCooldownTimeRemaining = cd
+
+                if DebugLog.isEnabled {
+                    DebugLog.log("SadieJump: roll=\(String(format: "%.2f", roll)) vy=\(String(format: "%.1f", vy)) cooldown=\(String(format: "%.2f", cd))")
+                }
+            } else {
+                // Short retry cooldown so we don't roll every tick
+                let retry = sadieNoJumpRetryMin + (nextRNGDouble01() * (sadieNoJumpRetryMax - sadieNoJumpRetryMin))
+                state.puppyJumpCooldownTimeRemaining = retry
+
+                if DebugLog.isEnabled {
+                    DebugLog.log("SadieJumpSkip: roll=\(String(format: "%.2f", roll)) retryIn=\(String(format: "%.2f", retry))")
+                }
+            }
+        }
+
+        // Horizontal movement (continues while airborne).
+        let speed = baseRunSpeed * puppySpeedMultiplier(for: state.activePuppyId)
+        let dir = Double(state.puppyDecisionMode)
+        state.puppyX += dir * speed * deltaTime
+
+        // Facing/anim derived from motion mode (no distinct jump anim in v1).
+        if state.puppyDecisionMode == 0 {
+            state.puppyAnim = .idle
+        } else {
+            state.puppyAnim = .run
+            state.puppyFacing = (state.puppyDecisionMode > 0) ? .right : .left
+        }
+    }
+
+
+
+
+// Section 8.4.4: Violet behavior (Level 4)
+// v1 personality:
+// - Fast
+// - Can jump
+// - Jumps are accurate (less randomness than Sadie; tighter cooldowns; lower jitter)
+private func updateViolet(deltaTime: Double) {
+    // Horizontal targeting similar to Sadie, but with less idle and fewer wrong-direction decisions.
+    state.puppyDecisionTimeRemaining -= deltaTime
+    if state.puppyDecisionTimeRemaining <= 0.0 {
+        let toward: Int
+        if state.playerX > state.puppyX + 1.0 {
+            toward = 1
+        } else if state.playerX < state.puppyX - 1.0 {
+            toward = -1
+        } else {
+            toward = 0
+        }
+
+        // Violet: almost always correct, occasionally wrong, rarely idle.
+        let r = Int(nextRNGUInt64() % 30) // 0..29
+        if r == 0 {
+            state.puppyDecisionMode = 0
+        } else if r <= 25 {
+            state.puppyDecisionMode = toward == 0 ? 0 : toward
+        } else {
+            state.puppyDecisionMode = (toward == 0) ? 0 : -toward
+        }
+
+        // Duration: 0.22s .. 0.62s (reactive, but not jittery)
+        let duration = 0.22 + (nextRNGDouble01() * 0.40)
+        state.puppyDecisionTimeRemaining = duration
+
+        if DebugLog.isEnabled {
+            DebugLog.log("VioletDecision: mode=\(state.puppyDecisionMode) toward=\(toward) duration=\(String(format: "%.2f", duration))")
+        }
+    }
+
+    // Accurate jumps (deterministic via GameCore RNG).
+    state.puppyJumpCooldownTimeRemaining = max(0.0, state.puppyJumpCooldownTimeRemaining - deltaTime)
+
+    if isPuppyGrounded() && state.puppyJumpCooldownTimeRemaining <= 0.0 {
+        let roll = nextRNGDouble01()
+        if roll < violetJumpAttemptChance {
+            let jitter = (nextRNGDouble01() * 2.0 - 1.0) * violetJumpVelocityJitterPct
+            let vy = violetBaseJumpVelocity * (1.0 + jitter)
+            state.puppyVY = vy
+
+            let cd = violetJumpCooldownMin + (nextRNGDouble01() * (violetJumpCooldownMax - violetJumpCooldownMin))
+            state.puppyJumpCooldownTimeRemaining = cd
+
+            if DebugLog.isEnabled {
+                DebugLog.log("VioletJump: roll=\(String(format: "%.2f", roll)) vy=\(String(format: "%.1f", vy)) cooldown=\(String(format: "%.2f", cd))")
+            }
+        } else {
+            let retry = violetNoJumpRetryMin + (nextRNGDouble01() * (violetNoJumpRetryMax - violetNoJumpRetryMin))
+            state.puppyJumpCooldownTimeRemaining = retry
+
+            if DebugLog.isEnabled {
+                DebugLog.log("VioletJumpSkip: roll=\(String(format: "%.2f", roll)) retryIn=\(String(format: "%.2f", retry))")
+            }
+        }
+    }
+
+    // Horizontal movement (continues while airborne).
+    let speed = baseRunSpeed * puppySpeedMultiplier(for: state.activePuppyId)
+    let dir = Double(state.puppyDecisionMode)
+    state.puppyX += dir * speed * deltaTime
+
+    if state.puppyDecisionMode == 0 {
+        state.puppyAnim = .idle
+    } else {
+        state.puppyAnim = .run
+        state.puppyFacing = (state.puppyDecisionMode > 0) ? .right : .left
+    }
+}
+
+
+// Section 8.4.5: Georgia behavior (Level 5)
+// v1 personality:
+// - Fast
+// - Can jump
+// - Periodically applies a deterministic horizontal "cute pull" toward herself (handled in applyGeorgiaCutePull)
+// - Minimal hesitation; very accurate movement and jumping
+private func updateGeorgia(deltaTime: Double) {
+    // Horizontal targeting similar to Violet, but with even less idle and fewer wrong-direction decisions.
+    state.puppyDecisionTimeRemaining -= deltaTime
+    if state.puppyDecisionTimeRemaining <= 0.0 {
+        let toward: Int
+        if state.playerX > state.puppyX + 1.0 {
+            toward = 1
+        } else if state.playerX < state.puppyX - 1.0 {
+            toward = -1
+        } else {
+            toward = 0
+        }
+
+        // Georgia: overwhelmingly correct direction, very rarely idle or wrong.
+        let r = Int(nextRNGUInt64() % 40) // 0..39
+        if r == 0 {
+            state.puppyDecisionMode = 0 // rare idle
+        } else if r <= 36 {
+            state.puppyDecisionMode = toward == 0 ? 0 : toward
+        } else {
+            state.puppyDecisionMode = (toward == 0) ? 0 : -toward // rare wrong
+        }
+
+        // Duration: 0.20s .. 0.55s (high responsiveness)
+        let duration = 0.20 + (nextRNGDouble01() * 0.35)
+        state.puppyDecisionTimeRemaining = duration
+
+        if DebugLog.isEnabled {
+            DebugLog.log("GeorgiaDecision: mode=\(state.puppyDecisionMode) toward=\(toward) duration=\(String(format: "%.2f", duration))")
+        }
+    }
+
+    // Reliable jumps (deterministic).
+    state.puppyJumpCooldownTimeRemaining = max(0.0, state.puppyJumpCooldownTimeRemaining - deltaTime)
+
+    if isPuppyGrounded() && state.puppyJumpCooldownTimeRemaining <= 0.0 {
+        let roll = nextRNGDouble01()
+        if roll < georgiaJumpAttemptChance {
+            let jitter = (nextRNGDouble01() * 2.0 - 1.0) * georgiaJumpVelocityJitterPct
+            let vy = georgiaBaseJumpVelocity * (1.0 + jitter)
+            state.puppyVY = vy
+
+            // Fixed cooldown (user-locked).
+            state.puppyJumpCooldownTimeRemaining = georgiaJumpCooldown
+
+            if DebugLog.isEnabled {
+                DebugLog.log("GeorgiaJump: roll=\(String(format: "%.2f", roll)) vy=\(String(format: "%.1f", vy)) cooldown=\(String(format: "%.2f", georgiaJumpCooldown))")
+            }
+        } else {
+            // Fixed retry delay so we don't roll every tick.
+            state.puppyJumpCooldownTimeRemaining = georgiaNoJumpRetry
+
+            if DebugLog.isEnabled {
+                DebugLog.log("GeorgiaJumpSkip: roll=\(String(format: "%.2f", roll)) retryIn=\(String(format: "%.2f", georgiaNoJumpRetry))")
+            }
+        }
+    }
+
+    // Horizontal movement (continues while airborne).
+    let speed = baseRunSpeed * puppySpeedMultiplier(for: state.activePuppyId)
+    let dir = Double(state.puppyDecisionMode)
+    state.puppyX += dir * speed * deltaTime
+
+    if state.puppyDecisionMode == 0 {
+        state.puppyAnim = .idle
+    } else {
+        state.puppyAnim = .run
+        state.puppyFacing = (state.puppyDecisionMode > 0) ? .right : .left
+    }
+
+    // Initialize Georgia cute-pull cadence on first tick after spawn.
+    if state.georgiaCutePullCooldownRemaining <= 0.0 && state.georgiaCutePullTimeRemaining <= 0.0 {
+        state.georgiaCutePullCooldownRemaining = georgiaCutePullCooldown
+    }
+}
+
+// Section 8.4.6: Georgia cute pull application (player bias)
+// Contract:
+// - When Georgia is active, a pull window periodically activates.
+// - During the pull window, playerX is biased toward puppyX at a fixed rate (points/sec).
+// - All effects remain deterministic and are clamped by the existing camera-window rules.
+private func applyGeorgiaCutePull(deltaTime: Double) {
+    guard state.activePuppyId == "Georgia" else { return }
+    guard state.puppyHasSpawnedThisLevel else { return }
+
+    // Countdown existing timers
+    if state.georgiaCutePullCooldownRemaining > 0.0 {
+        state.georgiaCutePullCooldownRemaining = max(0.0, state.georgiaCutePullCooldownRemaining - deltaTime)
+    }
+    if state.georgiaCutePullTimeRemaining > 0.0 {
+        state.georgiaCutePullTimeRemaining = max(0.0, state.georgiaCutePullTimeRemaining - deltaTime)
+    }
+
+    // Start a new pull window when cooldown expires and we are not already pulling.
+    if state.georgiaCutePullCooldownRemaining <= 0.0 && state.georgiaCutePullTimeRemaining <= 0.0 {
+        state.georgiaCutePullTimeRemaining = georgiaCutePullDuration
+        state.georgiaCutePullConfiguredDuration = georgiaCutePullDuration
+        state.georgiaCutePullCooldownRemaining = georgiaCutePullCooldown
+
+        if DebugLog.isEnabled {
+            DebugLog.log("GeorgiaCutePullStart: duration=\(String(format: "%.2f", georgiaCutePullDuration)) cooldown=\(String(format: "%.2f", georgiaCutePullCooldown)) strength=\(String(format: "%.1f", georgiaCutePullStrength))")
+        }
+    }
+
+    // Apply pull if active
+    guard state.georgiaCutePullTimeRemaining > 0.0 else { return }
+
+    let dx = state.puppyX - state.playerX
+    if abs(dx) < 0.0001 { return }
+
+    let dir: Double = dx > 0 ? 1.0 : -1.0
+    let delta = dir * georgiaCutePullStrength * deltaTime
+    state.playerX += delta
+
+    if DebugLog.isEnabled {
+        DebugLog.log("GeorgiaCutePullApply: playerX+=\(String(format: "%.2f", delta)) playerX=\(String(format: "%.1f", state.playerX)) puppyX=\(String(format: "%.1f", state.puppyX)) remaining=\(String(format: "%.2f", state.georgiaCutePullTimeRemaining))")
+    }
+}
 
     // Section 10.2: Clamp puppy to the player's current room bounds (v1 doorless)
     //
@@ -762,6 +1135,18 @@ private func evaluateCapture() {
         let d2 = (dx * dx) + (dy * dy)
 
         if d2 <= r2 {
+            // Special rule (Sadie+): if contact occurs while either entity is airborne, snap both to ground immediately
+            // and treat as an immediate capture. Rendering will show the captured/lick states from ground level.
+            if state.playerY > clampEpsilon || state.puppyY > clampEpsilon {
+                if DebugLog.isEnabled {
+                    DebugLog.log("CAPTURE_MIDAIR: playerY=\(String(format: "%.1f", state.playerY)) puppyY=\(String(format: "%.1f", state.puppyY)) -> snapping to ground")
+                }
+                state.playerY = 0.0
+                state.playerVY = 0.0
+                state.puppyY = 0.0
+                state.puppyVY = 0.0
+            }
+
             state.runPhase = .captured
             state.postCaptureTime = 0.0
             state.didJustCaptureThisTick = true

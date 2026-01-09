@@ -1,5 +1,5 @@
 // File: GameScene.swift
-// GameScene_20260103-1538.swift
+// GameScene_20260106-1700.swift
 // Purpose: SpriteKit renderer that consumes immutable GameState snapshots and renders the world (rooms + player + puppy + HUD).
 //          Rendering must never mutate GameCore state. Input is emitted as InputEvents via callbacks.
 //
@@ -70,6 +70,11 @@ final class GameScene: SKScene {
     private let puppySprite = SKSpriteNode()
 
 
+
+    // Section 3.0.2: Georgia cute-pull overlay (renders on top of the player during Georgia's pull window)
+    private let georgiaCuteOverlaySprite = SKSpriteNode()
+    private var georgiaCuteOverlayFrames: [SKTexture] = []
+    private var georgiaCuteOverlayLastConfiguredDuration: Double = -1.0
     // Section 3.0.1: Puppy visual scale (tunable). Requested: 1/3 size.
     private let puppyScale: CGFloat = 1.0 / 2.0
 
@@ -138,6 +143,15 @@ final class GameScene: SKScene {
         playerSprite.name = "player"
         playerSprite.zPosition = 0
         addChild(playerSprite)
+
+// Georgia cute-pull overlay: visually indicates Georgia exerting her pull (overlays player anim).
+georgiaCuteOverlaySprite.size = CGSize(width: 128, height: 128)
+georgiaCuteOverlaySprite.position = playerSprite.position
+georgiaCuteOverlaySprite.name = "georgiaCuteOverlay"
+georgiaCuteOverlaySprite.zPosition = playerSprite.zPosition + 5
+georgiaCuteOverlaySprite.isHidden = true
+addChild(georgiaCuteOverlaySprite)
+
 
         // Puppy sprite defaults; textures applied during first render.
         puppySprite.size = CGSize(width: 128, height: 128)
@@ -356,6 +370,9 @@ let tappedPlayer = hitNodes.contains { node in
         let puppyScreenX = state.puppyX - state.cameraX
         let puppyY = groundY + state.puppyY + (puppySprite.frame.height / 2)
         puppySprite.position = CGPoint(x: puppyScreenX, y: puppyY)
+
+        // Georgia cute-pull overlay (on top of player)
+        updateGeorgiaCuteOverlay(state: state)
     }
 
     private func applyFacing(sprite: SKSpriteNode, facing: PlayerFacing) {
@@ -562,6 +579,77 @@ let tappedPlayer = hitNodes.contains { node in
         playerVisualsCache[playerId] = visuals
         return visuals
     }
+
+
+
+// -------------------------------------------------------------------------
+// Section 7.5: Georgia cute-pull overlay (on top of player)
+// Contract:
+// - Only visible while Georgia pull is active (GameCore authoritative timer > 0)
+// - Uses frames Puppy_Georgia_cute_1 ... Puppy_Georgia_cute_9
+// - Plays exactly 9 frames over the configured pull duration (timePerFrame = duration/9)
+// -------------------------------------------------------------------------
+private func updateGeorgiaCuteOverlay(state: GameState) {
+    let isActive = (state.activePuppyId == "Georgia") && (state.georgiaCutePullTimeRemaining > 0.0)
+
+    if !isActive {
+        georgiaCuteOverlaySprite.removeAction(forKey: "georgia_cute")
+        georgiaCuteOverlaySprite.isHidden = true
+        georgiaCuteOverlayLastConfiguredDuration = -1.0
+        return
+    }
+
+    // Lazy-load textures once (and disable overlay if assets are missing).
+    if georgiaCuteOverlayFrames.isEmpty {
+        let firstName = "Puppy_Georgia_cute_1"
+        guard hasImageAsset(named: firstName) else {
+            if DebugLog.isEnabled {
+                DebugLog.log("GeorgiaCuteOverlay: missing asset \(firstName) (overlay disabled)")
+            }
+            return
+        }
+
+        georgiaCuteOverlayFrames = (1...9).map { i in
+            let t = SKTexture(imageNamed: "Puppy_Georgia_cute_\(i)")
+            t.filteringMode = .nearest
+            return t
+        }
+    }
+
+    georgiaCuteOverlaySprite.isHidden = false
+
+    // Keep overlay aligned with player and mirrored consistently.
+    georgiaCuteOverlaySprite.position = playerSprite.position
+    georgiaCuteOverlaySprite.xScale = playerSprite.xScale
+    georgiaCuteOverlaySprite.yScale = playerSprite.yScale
+
+    // Compute timePerFrame from configured duration (avoid divide-by-zero).
+    let duration = max(0.05, state.georgiaCutePullConfiguredDuration)
+    let timePerFrame = duration / 9.0
+
+    // Start/restart if entering pull window or if duration changed.
+    if georgiaCuteOverlaySprite.action(forKey: "georgia_cute") == nil ||
+        abs(georgiaCuteOverlayLastConfiguredDuration - duration) > 0.0001 {
+
+        georgiaCuteOverlayLastConfiguredDuration = duration
+        georgiaCuteOverlaySprite.removeAction(forKey: "georgia_cute")
+        georgiaCuteOverlaySprite.texture = georgiaCuteOverlayFrames.first
+
+        // Play once over the duration, then hold last frame for the remainder of the pull window.
+        let action = SKAction.sequence([
+            SKAction.animate(with: georgiaCuteOverlayFrames, timePerFrame: timePerFrame, resize: false, restore: false),
+            SKAction.wait(forDuration: 9999)
+        ])
+        georgiaCuteOverlaySprite.run(action, withKey: "georgia_cute")
+
+        if DebugLog.isEnabled {
+            DebugLog.log(
+                "GeorgiaCuteOverlay: started timePerFrame=\(String(format: "%.3f", timePerFrame)) " +
+                "duration=\(String(format: "%.2f", duration))"
+            )
+        }
+    }
+}
 
     // -------------------------------------------------------------------------
     // Section 8: Puppy visuals + animation

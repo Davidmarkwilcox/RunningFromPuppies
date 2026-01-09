@@ -166,7 +166,7 @@ struct GameHostView: View {
                 lastKnownSize = proxy.size
                 startRuntime(for: proxy.size)
             }
-            .onChange(of: proxy.size) { newSize in
+            .onChange(of: proxy.size) { _, newSize in
                 lastKnownSize = newSize
                 // Keep GameCore sizing in sync.
                 engine.setViewWidth(Double(newSize.width))
