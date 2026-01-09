@@ -23,7 +23,12 @@ final class GameScene: SKScene {
     // Section 2: Visual cache
     // -------------------------------------------------------------------------
     private struct PlayerVisuals {
+        // Idle animation:
+        // Preferred: <PlayerId>_idle_1 ... <PlayerId>_idle_9 (9-frame loop)
+        // Fallback:  <PlayerId>_idle (single frame)
         let idle: SKTexture
+        let idleFrames: [SKTexture]
+        let idleAction: SKAction
         let runFrames: [SKTexture]
         let runAction: SKAction
 
@@ -33,7 +38,12 @@ final class GameScene: SKScene {
     }
 
     private struct PuppyVisuals {
+        // Idle animation:
+        // Preferred: Puppy_<PuppyId>_idle_1 ... Puppy_<PuppyId>_idle_9 (9-frame loop)
+        // Fallback:  Puppy_<PuppyId>_idle (single frame)
         let idle: SKTexture
+        let idleFrames: [SKTexture]
+        let idleAction: SKAction
         let runFrames: [SKTexture]
         let runAction: SKAction
 
@@ -334,6 +344,13 @@ let tappedPlayer = hitNodes.contains { node in
     // Section 6: Main render entry point
     // -------------------------------------------------------------------------
     func render(state: GameState) {
+        // 6.0 Pause should freeze the currently displayed sprite frame (SpriteKit actions must not advance).
+        // GameCore simulation pause is handled by the fixed-step driver; this mirrors pause into SpriteKit nodes.
+        let shouldPauseSprites = state.isPaused
+        playerSprite.isPaused = shouldPauseSprites
+        puppySprite.isPaused = shouldPauseSprites
+        georgiaCuteOverlaySprite.isPaused = shouldPauseSprites
+
         // 6.1 Rooms (prev/current/next)
         renderRooms(state: state)
 
@@ -508,7 +525,10 @@ let tappedPlayer = hitNodes.contains { node in
         playerSprite.texture = visuals.idle
 
         playerSprite.removeAllActions()
-        if anim == .run {
+        if anim == .idle {
+            playerSprite.texture = visuals.idleFrames.first ?? visuals.idle
+            playerSprite.run(visuals.idleAction, withKey: "idle")
+        } else if anim == .run {
             playerSprite.run(visuals.runAction, withKey: "run")
         } else if anim == .captured {
             playerSprite.texture = visuals.captureFrames.first ?? visuals.idle
@@ -524,17 +544,22 @@ let tappedPlayer = hitNodes.contains { node in
             // Ensure we can replay capture on the next capture event.
             playerSprite.removeAction(forKey: "capture")
             playerSprite.removeAction(forKey: "run")
-            playerSprite.texture = visuals.idle
+            playerSprite.texture = visuals.idleFrames.first ?? visuals.idle
+            if playerSprite.action(forKey: "idle") == nil {
+                playerSprite.run(visuals.idleAction, withKey: "idle")
+            }
 
         case .run:
             // Ensure we can replay capture on the next capture event.
             playerSprite.removeAction(forKey: "capture")
+            playerSprite.removeAction(forKey: "idle")
             if playerSprite.action(forKey: "run") == nil {
                 playerSprite.run(visuals.runAction, withKey: "run")
             }
 
         case .captured:
             playerSprite.removeAction(forKey: "run")
+            playerSprite.removeAction(forKey: "idle")
             // Play capture animation (9 frames) if not already running.
             if playerSprite.action(forKey: "capture") == nil {
                 playerSprite.texture = visuals.captureFrames.first ?? visuals.idle
@@ -543,25 +568,91 @@ let tappedPlayer = hitNodes.contains { node in
         }
     }
 
+    
     private func loadPlayerVisuals(for playerId: String) -> PlayerVisuals {
         if let cached = playerVisualsCache[playerId] { return cached }
 
-        let resolvedId = hasImageAsset(named: "\(playerId)_idle") ? playerId : "Finley"
+        // -----------------------------------------------------------------
+        // Section 4.2.1: Player asset resolution (underscore-only)
+        // -----------------------------------------------------------------
+        // Expected idle naming:
+        //   <PlayerId>_idle_1 ... <PlayerId>_idle_9
+        // Optional fallback:
+        //   <PlayerId>_idle (single frame)
+        //
+        // We consider the requested player "available" if we can find at least one of:
+        //   - <PlayerId>_idle_1
+        //   - <PlayerId>_idle
+        //   - <PlayerId>_run_1
+        //
+        // If none are found, we fall back to Finley.
+        let hasAnyAssetForRequestedPlayer =
+            hasImageAsset(named: "\(playerId)_idle_1") ||
+            hasImageAsset(named: "\(playerId)_idle") ||
+            hasImageAsset(named: "\(playerId)_run_1")
 
-        let idleName = "\(resolvedId)_idle"
+        var resolvedId = hasAnyAssetForRequestedPlayer ? playerId : "Finley"
+        if DebugLog.isEnabled && resolvedId != playerId {
+            DebugLog.log("Player assets missing for '\(playerId)'; falling back to '\(resolvedId)'. Expected '\(playerId)_idle_1' at minimum.")
+        }
+
+        // Ensure we have *some* idle for the resolved ID; otherwise, force Finley as a last resort.
+        let idleSeqNamesForResolved = (1...9).map { "\(resolvedId)_idle_\($0)" }
+        let hasIdleSeqForResolved = hasImageAsset(named: idleSeqNamesForResolved.first ?? "")
+        let hasIdleSingleForResolved = hasImageAsset(named: "\(resolvedId)_idle")
+        if !hasIdleSeqForResolved && !hasIdleSingleForResolved {
+            if DebugLog.isEnabled {
+                DebugLog.log("No idle assets found for '\(resolvedId)' (expected '\(resolvedId)_idle_1' or '\(resolvedId)_idle'). Forcing fallback to 'Finley'.")
+            }
+            resolvedId = "Finley"
+        }
+
+        // --- Idle textures (9-frame loop preferred) ---
+        let idleSeqNames = (1...9).map { "\(resolvedId)_idle_\($0)" }
+        let hasIdleSeq = hasImageAsset(named: idleSeqNames.first ?? "")
+        let idleSingleName = "\(resolvedId)_idle"
+
+        // Per request: if the idle is a sequence, the "base" idle texture should be _idle_1.
+        let idleTextureName = hasIdleSeq ? (idleSeqNames.first ?? idleSingleName) : idleSingleName
+
+        // Run and capture conventions remain unchanged (underscore).
         let runNames = (1...16).map { "\(resolvedId)_run_\($0)" }
         let captureNames = (1...9).map { "\(resolvedId)_capture_\($0)" }
 
-        let idleTexture = SKTexture(imageNamed: idleName)
-        let runTextures = runNames.map { SKTexture(imageNamed: $0) }
+        // Load idle textures.
+        let idleTexture = SKTexture(imageNamed: idleTextureName)
+        idleTexture.filteringMode = .nearest
 
-        // Capture frames fallback: if not present, use idle as a single-frame animation.
-        let hasFirstCapture = hasImageAsset(named: captureNames.first ?? "")
-        let captureTextures: [SKTexture] = hasFirstCapture ? captureNames.map { SKTexture(imageNamed: $0) } : [idleTexture]
+        let idleFrames: [SKTexture]
+        if hasIdleSeq {
+            idleFrames = idleSeqNames.map { name in
+                let t = SKTexture(imageNamed: name)
+                t.filteringMode = .nearest
+                return t
+            }
+        } else {
+            idleFrames = [idleTexture]
+        }
+
+        let idleAction = SKAction.repeatForever(
+            SKAction.animate(with: idleFrames, timePerFrame: 0.10, resize: false, restore: false)
+        )
+
+        let runTextures = runNames.map { name in
+            let t = SKTexture(imageNamed: name)
+            t.filteringMode = .nearest
+            return t
+        }
 
         let runAction = SKAction.repeatForever(
             SKAction.animate(with: runTextures, timePerFrame: 0.08, resize: false, restore: false)
         )
+
+        let captureTextures = captureNames.map { name in
+            let t = SKTexture(imageNamed: name)
+            t.filteringMode = .nearest
+            return t
+        }
 
         // Play once then hold.
         let captureAction = SKAction.sequence([
@@ -571,14 +662,18 @@ let tappedPlayer = hitNodes.contains { node in
 
         let visuals = PlayerVisuals(
             idle: idleTexture,
+            idleFrames: idleFrames,
+            idleAction: idleAction,
             runFrames: runTextures,
             runAction: runAction,
             captureFrames: captureTextures,
             captureAction: captureAction
         )
+
         playerVisualsCache[playerId] = visuals
         return visuals
     }
+
 
 
 
@@ -663,10 +758,13 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
         currentPuppyId = puppyId
 
         let visuals = loadPuppyVisuals(for: puppyId)
-        puppySprite.texture = visuals.idle
+        puppySprite.texture = visuals.idleFrames.first ?? visuals.idle
 
         puppySprite.removeAllActions()
-        if anim == .run {
+        if anim == .idle {
+            puppySprite.texture = visuals.idleFrames.first ?? visuals.idle
+            puppySprite.run(visuals.idleAction, withKey: "puppy_idle")
+        } else if anim == .run {
             puppySprite.run(visuals.runAction, withKey: "puppy_run")
         } else if anim == .lick {
             puppySprite.run(visuals.lickAction, withKey: "puppy_lick")
@@ -681,17 +779,22 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
             // Ensure we can replay lick on the next capture event.
             puppySprite.removeAction(forKey: "puppy_lick")
             puppySprite.removeAction(forKey: "puppy_run")
-            puppySprite.texture = visuals.idle
+            puppySprite.texture = visuals.idleFrames.first ?? visuals.idle
+            if puppySprite.action(forKey: "puppy_idle") == nil {
+                puppySprite.run(visuals.idleAction, withKey: "puppy_idle")
+            }
 
         case .run:
             // Ensure we can replay lick on the next capture event.
             puppySprite.removeAction(forKey: "puppy_lick")
+            puppySprite.removeAction(forKey: "puppy_idle")
             if puppySprite.action(forKey: "puppy_run") == nil {
                 puppySprite.run(visuals.runAction, withKey: "puppy_run")
             }
 
         case .lick:
             puppySprite.removeAction(forKey: "puppy_run")
+            puppySprite.removeAction(forKey: "puppy_idle")
             if puppySprite.action(forKey: "puppy_lick") == nil {
                 puppySprite.run(visuals.lickAction, withKey: "puppy_lick")
             }
@@ -703,13 +806,16 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
 
         let base = "Puppy_\(puppyId)"
         let idleName = "\(base)_idle"
+        let idleSequenceNames = (1...9).map { "\(base)_idle_\($0)" }
         let runNames = (1...16).map { "\(base)_run_\($0)" }
         let lickNames = (1...9).map { "\(base)_lick_\($0)" }
 
-        let hasIdle = hasImageAsset(named: idleName)
+        let hasIdleSingle = hasImageAsset(named: idleName)
+        let hasIdleSequence = hasImageAsset(named: idleSequenceNames.first ?? "")
+        let hasAnyIdle = hasIdleSingle || hasIdleSequence
 
         // If puppy art is missing, build a visible placeholder to avoid silent failures.
-        if !hasIdle {
+        if !hasAnyIdle {
             if DebugLog.isEnabled {
                 DebugLog.log("Missing puppy idle asset: \(idleName) (using placeholder textures)")
             }
@@ -717,16 +823,30 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
             // Placeholder textures: use colored squares generated from SKTexture via sprite color.
             // We'll still use SKTexture(imageNamed:) to keep the pipeline simple; the sprite will fall back to color.
             let placeholderIdle = SKTexture(imageNamed: idleName)
-            let placeholderRun = runNames.map { SKTexture(imageNamed: $0) }
-            let placeholderLick = lickNames.map { SKTexture(imageNamed: $0) }
+            placeholderIdle.filteringMode = .nearest
+            let placeholderIdleFrames = [placeholderIdle]
+            let placeholderIdleAction = SKAction.repeatForever(
+                SKAction.animate(with: placeholderIdleFrames, timePerFrame: 0.10, resize: false, restore: false)
+            )
+
+            let placeholderRun = runNames.map { name in
+                let t = SKTexture(imageNamed: name)
+                t.filteringMode = .nearest
+                return t
+            }
+            let placeholderLick = lickNames.map { name in
+                let t = SKTexture(imageNamed: name)
+                t.filteringMode = .nearest
+                return t
+            }
 
             let runAction = SKAction.repeatForever(
                 SKAction.animate(with: placeholderRun, timePerFrame: 0.08, resize: false, restore: false)
             )
             let lickAction = SKAction.sequence([
-            SKAction.animate(with: placeholderLick, timePerFrame: 0.08, resize: false, restore: false),
-            SKAction.wait(forDuration: 9999)
-        ])
+                SKAction.animate(with: placeholderLick, timePerFrame: 0.08, resize: false, restore: false),
+                SKAction.wait(forDuration: 9999)
+            ])
 
             // Make the sprite visible even if the textures are empty.
             puppySprite.color = .white
@@ -734,6 +854,8 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
 
             let visuals = PuppyVisuals(
                 idle: placeholderIdle,
+                idleFrames: placeholderIdleFrames,
+                idleAction: placeholderIdleAction,
                 runFrames: placeholderRun,
                 runAction: runAction,
                 lickFrames: placeholderLick,
@@ -746,9 +868,37 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
         // Normal path: real assets present
         puppySprite.colorBlendFactor = 0.0
 
-        let idleTexture = SKTexture(imageNamed: idleName)
-        let runTextures = runNames.map { SKTexture(imageNamed: $0) }
-        let lickTextures = lickNames.map { SKTexture(imageNamed: $0) }
+        // Idle: prefer 9-frame idle sprites if present, else fall back to single-frame idle.
+        let idleFrames: [SKTexture]
+        let idleTexture: SKTexture
+        if hasIdleSequence {
+            idleFrames = idleSequenceNames.map { name in
+                let t = SKTexture(imageNamed: name)
+                t.filteringMode = .nearest
+                return t
+            }
+            idleTexture = idleFrames.first ?? SKTexture(imageNamed: idleName)
+        } else {
+            let t = SKTexture(imageNamed: idleName)
+            t.filteringMode = .nearest
+            idleTexture = t
+            idleFrames = [t]
+        }
+
+        let idleAction = SKAction.repeatForever(
+            SKAction.animate(with: idleFrames, timePerFrame: 0.10, resize: false, restore: false)
+        )
+
+        let runTextures = runNames.map { name in
+            let t = SKTexture(imageNamed: name)
+            t.filteringMode = .nearest
+            return t
+        }
+        let lickTextures = lickNames.map { name in
+            let t = SKTexture(imageNamed: name)
+            t.filteringMode = .nearest
+            return t
+        }
 
         let runAction = SKAction.repeatForever(
             SKAction.animate(with: runTextures, timePerFrame: 0.08, resize: false, restore: false)
@@ -759,7 +909,15 @@ private func updateGeorgiaCuteOverlay(state: GameState) {
             SKAction.wait(forDuration: 9999)
         ])
 
-        let visuals = PuppyVisuals(idle: idleTexture, runFrames: runTextures, runAction: runAction, lickFrames: lickTextures, lickAction: lickAction)
+        let visuals = PuppyVisuals(
+            idle: idleTexture,
+            idleFrames: idleFrames,
+            idleAction: idleAction,
+            runFrames: runTextures,
+            runAction: runAction,
+            lickFrames: lickTextures,
+            lickAction: lickAction
+        )
         puppyVisualsCache[puppyId] = visuals
         return visuals
     }
