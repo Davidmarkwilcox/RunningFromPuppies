@@ -67,6 +67,35 @@ struct GameHostView: View {
         _selectedPlayerId = State(initialValue: activePlayerId)
     }
 
+    // Section 2.4: Shared post-capture UI styling
+    // We standardize the "after capture" controls (Play Again, Character Selection, Next Level, Main Menu)
+    // to ensure consistent visibility and tap affordance.
+    private struct PostCapturePrimaryControlModifier: ViewModifier {
+        @Environment(\.isEnabled) private var isEnabled
+
+        // Tunables (kept private to avoid theme drift)
+        private let font = Font.system(size: 22, weight: .bold, design: .monospaced)
+        private let horizontalPadding: CGFloat = 24
+        private let verticalPadding: CGFloat = 12
+        private let cornerRadius: CGFloat = 10
+
+        func body(content: Content) -> some View {
+            content
+                .font(font)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, verticalPadding)
+                .foregroundStyle(Color.white)
+                .background(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(Color.blue.opacity(isEnabled ? 1.0 : 0.55))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                )
+        }
+    }
+
     // Section 3: View
     var body: some View {
         GeometryReader { proxy in
@@ -101,20 +130,25 @@ struct GameHostView: View {
                             restartRun(for: proxy.size)
                         }) {
                             Text("Play Again")
-                                .font(.system(size: 22, weight: .bold, design: .monospaced))
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 12)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.plain)
+                        .modifier(PostCapturePrimaryControlModifier())
 
                         // Row 2: Character selection (under Play Again)
-                        Picker("Character", selection: $selectedPlayerId) {
+                        // Implemented as a Menu so it can share the same primary visual styling.
+                        Menu {
                             ForEach(availablePlayerIds(), id: \.self) { id in
-                                Text(id).tag(id)
+                                Button(action: {
+                                    selectedPlayerId = id
+                                }) {
+                                    Text(id)
+                                }
                             }
+                        } label: {
+                            Text("Character: \(selectedPlayerId)")
                         }
-                        .pickerStyle(.menu)
-                        .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                        .buttonStyle(.plain)
+                        .modifier(PostCapturePrimaryControlModifier())
 
                         // Row 3: Next Level
                         Button(action: {
@@ -126,14 +160,13 @@ struct GameHostView: View {
                             }
                         }) {
                             Text(currentLevel < maxLevel ? "Next Level as \(selectedPlayerId)" : "Max Level")
-                                .font(.system(size: 22, weight: .bold, design: .monospaced))
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 12)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.plain)
+                        .modifier(PostCapturePrimaryControlModifier())
                         .disabled(currentLevel >= maxLevel)
 
-                        Button(role: .destructive, action: {
+                        // Row 4: Main Menu
+                        Button(action: {
                             // Stop runtime and return to the prior screen.
                             driver?.stop()
                             driver = nil
@@ -149,11 +182,9 @@ struct GameHostView: View {
                             dismiss()
                         }) {
                             Text("Main Menu")
-                                .font(.system(size: 18, weight: .bold, design: .monospaced))
-                                .padding(.horizontal, 22)
-                                .padding(.vertical, 10)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.plain)
+                        .modifier(PostCapturePrimaryControlModifier())
 
                         Spacer()
                     }
@@ -191,6 +222,12 @@ struct GameHostView: View {
         scene.size = size
         scene.scaleMode = .resizeFill
 
+        // Capture the scene instance we are wiring to this driver. This prevents a rare but
+        // impactful crash where a stopped driver can still deliver one last onStateUpdated
+        // tick while SwiftUI has already swapped the @State `scene` for a fresh instance
+        // during "Play Again".
+        let activeScene = scene
+
         // Apply UI-owned snapshot fields
         engine.setViewWidth(Double(size.width))
         engine.setViewHeight(Double(size.height))
@@ -199,10 +236,11 @@ struct GameHostView: View {
         // Wire callbacks
         let newDriver = FixedStepDriver(engine: engine)
 
-        newDriver.onStateUpdated = { state in
+        newDriver.onStateUpdated = { [weak activeScene] state in
             // Drive SpriteKit rendering
-            scene.render(state: state)
-// Drive SwiftUI overlay state (main thread)
+            activeScene?.render(state: state)
+
+            // Drive SwiftUI overlay state (main thread)
             DispatchQueue.main.async {
                 self.lastRunPhase = state.runPhase
                 self.currentLevel = state.currentLevel
@@ -215,12 +253,12 @@ struct GameHostView: View {
         newDriver.drainInputEvents = { input.drain() }
 
         // Route SpriteKit tap events into the same deterministic input queue.
-        scene.onInputEvent = { event in
+        activeScene.onInputEvent = { event in
             input.enqueue(event)
         }
 
         // Note: Play Again is handled in SwiftUI overlay for reliable taps.
-        scene.onPlayAgain = {
+        activeScene.onPlayAgain = {
             // Keep wired for future use, but rely on SwiftUI overlay.
             restartRun(for: size)
         }

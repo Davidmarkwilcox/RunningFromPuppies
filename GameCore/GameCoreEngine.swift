@@ -81,12 +81,11 @@ final class GameCoreEngine {
         // Preserve view sizing fields owned by the runtime.
         let preservedViewWidth = state.viewWidth
         let preservedViewHeight = state.viewHeight
-        let preservedScale = state.viewContentScale
-
         state = GameState()
         state.viewWidth = preservedViewWidth
         state.viewHeight = preservedViewHeight
-        state.viewContentScale = preservedScale
+        // viewContentScale is runtime-owned but room sizing uses points; keep default 1.0 on reset for determinism.
+        state.viewContentScale = 1.0
 
         state.currentLevel = 1
         state.activePuppyId = puppyId(forLevel: 1)

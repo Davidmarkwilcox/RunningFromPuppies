@@ -1,5 +1,5 @@
 // File: GameState.swift
-// GameState_20260106-2045.swift
+// GameState_20260108-2307.swift
 // Purpose: Defines the authoritative, deterministic simulation state for Running From Puppies (GameCore).
 //          Rendering consumes immutable snapshots of this state and must never mutate it.
 //          This file is the single source of truth for simulation data (player, camera, rooms, active puppy, scoring, run phase).
@@ -40,6 +40,26 @@ enum PuppyAnim: String, Codable {
     case idle
     case run
     case lick
+}
+
+// Section 3.1: Sprite visual scaling (snapshot + config)
+// Notes:
+// - These factors are visual-only. They should not affect physics/collision.
+// - Rendering should apply these consistently across ALL animation states so that
+//   idle/run/captured (players) and idle/run/lick (puppies) remain size-consistent.
+struct SpriteScale: Codable {
+    var x: Double
+    var y: Double
+
+    static let one = SpriteScale(x: 1.0, y: 1.0)
+
+    static func uniform(_ s: Double) -> SpriteScale {
+        return SpriteScale(x: s, y: s)
+    }
+
+    func multiplied(by other: SpriteScale) -> SpriteScale {
+        return SpriteScale(x: self.x * other.x, y: self.y * other.y)
+    }
 }
 
 // Section 4: GameState
@@ -111,7 +131,8 @@ struct GameState {
     var viewWidth: Double = 390.0
     var viewHeight: Double = 844.0
 
-    // Content scale (e.g., UIScreen.main.scale). Used to convert pixel dimensions back to points.
+    // Content scale (e.g., UIScreen.main.scale). Reserved for future pixel-to-point conversions.
+    // IMPORTANT: Room sizing is computed in points and must NOT divide by viewContentScale.
     var viewContentScale: Double = 1.0
 
     // Constant forward camera speed (points/sec).
@@ -163,7 +184,8 @@ struct GameState {
             return Array(repeating: 0.0, count: roomIds.count)
         }
 
-        let effectiveViewHeight = viewHeight / max(viewContentScale, 1.0)
+        // viewHeight is already in points; do not adjust by content scale (Retina), or room widths will shrink.
+        let effectiveViewHeight = viewHeight
         let pxPerUnit = baseRoomPixelWidthPerUnit
         let pxH = baseRoomPixelHeight
 
@@ -175,7 +197,8 @@ struct GameState {
     // Convenience: the world-point width of a 1-unit room at the current viewHeight.
     var oneUnitRoomWidth: Double {
         guard viewHeight > 0, baseRoomPixelHeight > 0 else { return 0.0 }
-        let effectiveViewHeight = viewHeight / max(viewContentScale, 1.0)
+        // viewHeight is already in points; do not adjust by content scale (Retina), or room widths will shrink.
+        let effectiveViewHeight = viewHeight
         return effectiveViewHeight * (baseRoomPixelWidthPerUnit / baseRoomPixelHeight)
     }
 
@@ -187,6 +210,114 @@ struct GameState {
     // 4.7 Player presentation selection + state (snapshot-only)
     // -------------------------------------------------------------------------
     var activePlayerId: String = "Finley"
+
+    // -------------------------------------------------------------------------
+    // 4.7.1 Sprite visual scaling factors (snapshot-only config)
+    // -------------------------------------------------------------------------
+    // Contract:
+    // - One set of X/Y scale factors per player and per puppy.
+    // - Rendering applies these consistently across all animation states.
+    // - Defaults are 1.0 (no scaling).
+    // - Visual-only: do not use these for physics bodies.
+    //
+    // NOTE: Keep these tables grouped here for easy tuning.
+    var playerSpriteScaleById: [String: SpriteScale] = [
+        "Finley": .one,
+        "Charlotte": .one,
+        "Sophia": .one,
+        "Isabella": .one
+    ]
+
+    // Optional per-animation-group multiplier scales (applied on top of playerSpriteScaleById).
+    // Use cases (examples):
+    // - Finley run group:   playerSpriteScaleByIdAndGroup["Finley"]?["run"] = .uniform(1.2)
+    // - Finley idle group:  playerSpriteScaleByIdAndGroup["Finley"]?["idle"] = .uniform(0.75)
+    // - Charlotte capture:  playerSpriteScaleByIdAndGroup["Charlotte"]?["capture"] = .uniform(1.1)
+    //
+    // Group keys used by rendering (v1): "idle", "run", "capture".
+    // Defaults are 1.0 (no additional scaling).
+    var playerSpriteScaleByIdAndGroup: [String: [String: SpriteScale]] = [
+        "Finley": [
+            "idle": SpriteScale(x: 0.6, y: 1.0),
+            "run": .one,
+            "capture": SpriteScale(x: 1.2, y: 1.2),
+        ],
+        "Charlotte": [
+            "idle": SpriteScale(x: 0.5, y: 1.0),
+            "run": .one,
+            "capture": .one
+        ],
+        "Sophia": [
+            "idle": .one,
+            "run": .one,
+            "capture": .one
+        ],
+        "Isabella": [
+            "idle": .uniform(0.85),
+            "run": .one,
+            "capture": .one
+        ]
+    ]
+
+    var puppySpriteScaleById: [String: SpriteScale] = [
+        "Lilly": SpriteScale(x: 1.0, y: 1.0),
+        "Molly": SpriteScale(x: 1.0, y: 1.0),
+        "Sadie": SpriteScale(x: 1.0, y: 1.0),
+        "Violet": SpriteScale(x: 1.0, y: 1.0),
+        "Georgia": SpriteScale(x: 1.0, y: 1.0)
+    ]
+
+    // Optional per-animation-group multiplier scales (applied on top of puppySpriteScaleById).
+    // Group keys used by rendering (v1): "idle", "run", "lick".
+    // Defaults are 1.0 (no additional scaling).
+    var puppySpriteScaleByIdAndGroup: [String: [String: SpriteScale]] = [
+        "Lilly": [
+            "idle": .one,
+            "run": .one,
+            "lick": SpriteScale(x: 1.15, y: 1.15),
+        ],
+        "Molly": [
+            "idle": .one,
+            "run": .one,
+            "lick": .one
+        ],
+        "Sadie": [
+            "idle": .one,
+            "run": .one,
+            "lick": SpriteScale(x: 1.15, y: 1.15)
+        ],
+        "Violet": [
+            "idle": SpriteScale(x: 0.85, y: 0.85),
+            "run": .one,
+            "lick": .one
+        ],
+        "Georgia": [
+            "idle": .one,
+            "run": .one,
+            "lick": .one
+        ]
+    ]
+
+    func playerSpriteScale(for playerId: String) -> SpriteScale {
+        return playerSpriteScaleById[playerId] ?? .one
+    }
+
+    func playerSpriteScale(for playerId: String, group: String) -> SpriteScale {
+        let base = playerSpriteScale(for: playerId)
+        let groupScale = playerSpriteScaleByIdAndGroup[playerId]?[group] ?? .one
+        return base.multiplied(by: groupScale)
+    }
+
+    func puppySpriteScale(for puppyId: String) -> SpriteScale {
+        return puppySpriteScaleById[puppyId] ?? .one
+    }
+
+    func puppySpriteScale(for puppyId: String, group: String) -> SpriteScale {
+        let base = puppySpriteScale(for: puppyId)
+        let groupScale = puppySpriteScaleByIdAndGroup[puppyId]?[group] ?? .one
+        return base.multiplied(by: groupScale)
+    }
+
     var hasReceivedUserMovementInput: Bool = true
     var playerFacing: PlayerFacing = .right
     var playerAnim: PlayerAnim = .idle
@@ -259,4 +390,3 @@ extension GameState {
 }
 
 // End of GameState.swift
-

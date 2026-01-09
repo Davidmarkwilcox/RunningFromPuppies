@@ -68,16 +68,23 @@ final class GameScene: SKScene {
     // Player visual caches
     private var playerVisualsCache: [String: PlayerVisuals] = [:]
     private var currentPlayerId: String = ""
+    private var lastAppliedPlayerScaleGroup: String = ""
 
     // Puppy visual caches
     private var puppyVisualsCache: [String: PuppyVisuals] = [:]
     private var currentPuppyId: String = ""
+    private var lastAppliedPuppyScaleGroup: String = ""
 
     // -------------------------------------------------------------------------
     // Section 3: Nodes
     // -------------------------------------------------------------------------
     private let playerSprite = SKSpriteNode()
     private let puppySprite = SKSpriteNode()
+
+    // Section 3.0: Scene initialization guard
+    // SpriteView can start delivering updates before SpriteKit calls didMove(to:).
+    // We guard against that to keep sprite scale sizing deterministic on restarts.
+    private var hasPerformedInitialSetup: Bool = false
 
 
 
@@ -119,6 +126,13 @@ final class GameScene: SKScene {
     // Section 3.4: didMove (scene setup)
     // -------------------------------------------------------------------------
     override func didMove(to view: SKView) {
+        performInitialSetupIfNeeded()
+    }
+
+    private func performInitialSetupIfNeeded() {
+        guard !hasPerformedInitialSetup else { return }
+        hasPerformedInitialSetup = true
+
         backgroundColor = .black
 
         // HUD setup
@@ -154,14 +168,13 @@ final class GameScene: SKScene {
         playerSprite.zPosition = 0
         addChild(playerSprite)
 
-// Georgia cute-pull overlay: visually indicates Georgia exerting her pull (overlays player anim).
-georgiaCuteOverlaySprite.size = CGSize(width: 128, height: 128)
-georgiaCuteOverlaySprite.position = playerSprite.position
-georgiaCuteOverlaySprite.name = "georgiaCuteOverlay"
-georgiaCuteOverlaySprite.zPosition = playerSprite.zPosition + 5
-georgiaCuteOverlaySprite.isHidden = true
-addChild(georgiaCuteOverlaySprite)
-
+        // Georgia cute-pull overlay: visually indicates Georgia exerting her pull (overlays player anim).
+        georgiaCuteOverlaySprite.size = CGSize(width: 128, height: 128)
+        georgiaCuteOverlaySprite.position = playerSprite.position
+        georgiaCuteOverlaySprite.name = "georgiaCuteOverlay"
+        georgiaCuteOverlaySprite.zPosition = playerSprite.zPosition + 5
+        georgiaCuteOverlaySprite.isHidden = true
+        addChild(georgiaCuteOverlaySprite)
 
         // Puppy sprite defaults; textures applied during first render.
         puppySprite.size = CGSize(width: 128, height: 128)
@@ -170,6 +183,10 @@ addChild(georgiaCuteOverlaySprite)
         puppySprite.name = "puppy"
         puppySprite.zPosition = 0
         addChild(puppySprite)
+
+        if DebugLog.isEnabled {
+            DebugLog.log("GameScene.performInitialSetupIfNeeded() completed")
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -344,6 +361,9 @@ let tappedPlayer = hitNodes.contains { node in
     // Section 6: Main render entry point
     // -------------------------------------------------------------------------
     func render(state: GameState) {
+        // Defensive: ensure SpriteKit node graph is ready even if updates arrive before didMove(to:).
+        performInitialSetupIfNeeded()
+
         // 6.0 Pause should freeze the currently displayed sprite frame (SpriteKit actions must not advance).
         // GameCore simulation pause is handled by the fixed-step driver; this mirrors pause into SpriteKit nodes.
         let shouldPauseSprites = state.isPaused
@@ -367,11 +387,16 @@ let tappedPlayer = hitNodes.contains { node in
             applyPuppyVisuals(for: state.activePuppyId, anim: state.puppyAnim)
         }
 
-        // 6.5 Apply facing (flip xScale)
+        // 6.4.1 Apply sprite artwork scale factors (base * group) idempotently.
+        // Must happen before facing flips so the sign logic preserves magnitude.
+        applyPlayerSpriteScaleIfNeeded(state: state)
+        applyPuppySpriteScaleIfNeeded(state: state)
+
+        // 6.6 Apply facing (flip xScale)
         applyFacing(sprite: playerSprite, facing: state.playerFacing)
         applyFacing(sprite: puppySprite, facing: state.puppyFacing)
 
-        // 6.6 Apply animation state changes (player + puppy)
+        // 6.7 Apply animation state changes (player + puppy)
         applyPlayerAnimationIfNeeded(anim: state.playerAnim)
         applyPuppyAnimationIfNeeded(anim: state.puppyAnim)
 
@@ -400,6 +425,60 @@ let tappedPlayer = hitNodes.contains { node in
         case .left:
             sprite.xScale = -absScale
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Section 6.0.2: Sprite artwork scale application (idempotent)
+    // -------------------------------------------------------------------------
+    private func playerScaleGroup(for anim: PlayerAnim) -> String {
+        switch anim {
+        case .idle: return "idle"
+        case .run: return "run"
+        case .captured: return "capture"
+        }
+    }
+
+    private func puppyScaleGroup(for anim: PuppyAnim) -> String {
+        switch anim {
+        case .idle: return "idle"
+        case .run: return "run"
+        case .lick: return "lick"
+        }
+    }
+
+    private func applyPlayerSpriteScaleIfNeeded(state: GameState) {
+        let playerId = state.activePlayerId
+        let group = playerScaleGroup(for: state.playerAnim)
+
+        guard group != lastAppliedPlayerScaleGroup || playerId != currentPlayerId else { return }
+        lastAppliedPlayerScaleGroup = group
+
+        // Use GameState's configured scale tables (base * group).
+        let scale = state.playerSpriteScale(for: playerId, group: group)
+        let sx = CGFloat(max(scale.x, 0.0001))
+        let sy = CGFloat(max(scale.y, 0.0001))
+
+        // Preserve facing direction; only change magnitude.
+        let sign: CGFloat = (playerSprite.xScale >= 0) ? 1.0 : -1.0
+        playerSprite.xScale = sign * sx
+        playerSprite.yScale = sy
+    }
+
+    private func applyPuppySpriteScaleIfNeeded(state: GameState) {
+        let puppyId = state.activePuppyId
+        let group = puppyScaleGroup(for: state.puppyAnim)
+
+        guard group != lastAppliedPuppyScaleGroup || puppyId != currentPuppyId else { return }
+        lastAppliedPuppyScaleGroup = group
+
+        // Use GameState's configured scale tables (base * group).
+        let scale = state.puppySpriteScale(for: puppyId, group: group)
+        let sx = CGFloat(max(scale.x, 0.0001)) * puppyScale
+        let sy = CGFloat(max(scale.y, 0.0001)) * puppyScale
+
+        let sign: CGFloat = (puppySprite.xScale >= 0) ? 1.0 : -1.0
+        puppySprite.xScale = sign * sx
+        puppySprite.yScale = sy
     }
 
     // -------------------------------------------------------------------------
