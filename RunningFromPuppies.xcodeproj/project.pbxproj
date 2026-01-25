@@ -19,6 +19,9 @@
 		8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */; };
 		8A0D784D2EF756B2008BADF2 /* StartScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */; };
 		8A0D784F2EF756EC008BADF2 /* GameHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D784E2EF756EC008BADF2 /* GameHostView.swift */; };
+		8A126BFE2F26929A00DCE03F /* CloudKitLeaderboardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A126BFD2F26929A00DCE03F /* CloudKitLeaderboardService.swift */; };
+		8AAFC6EC2F2503A100066200 /* LeaderboardsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAFC6EB2F2503A100066200 /* LeaderboardsView.swift */; };
+		8AAFC6EE2F2503C700066200 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAFC6ED2F2503C700066200 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +38,9 @@
 		8A0D784A2EF4641E008BADF2 /* SwipeInputCollector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeInputCollector.swift; sourceTree = "<group>"; };
 		8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartScreenView.swift; sourceTree = "<group>"; };
 		8A0D784E2EF756EC008BADF2 /* GameHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHostView.swift; sourceTree = "<group>"; };
+		8A126BFD2F26929A00DCE03F /* CloudKitLeaderboardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitLeaderboardService.swift; sourceTree = "<group>"; };
+		8AAFC6EB2F2503A100066200 /* LeaderboardsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardsView.swift; sourceTree = "<group>"; };
+		8AAFC6ED2F2503C700066200 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -54,6 +60,11 @@
 				8A0D78282EF37870008BADF2 /* Exceptions for "RunningFromPuppies" folder in "RunningFromPuppies" target */,
 			);
 			path = RunningFromPuppies;
+			sourceTree = "<group>";
+		};
+		8ACD42432F256A2300FBB032 /* Persistance */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Persistance;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -81,7 +92,9 @@
 				8A0D78442EF44D59008BADF2 /* Assets */,
 				8A0D78452EF44D64008BADF2 /* Resources */,
 				8A0D78462EF44D6E008BADF2 /* Debug */,
+				8A126BFC2F26927C00DCE03F /* Services */,
 				8A0D78472EF44D78008BADF2 /* Shared */,
+				8ACD42432F256A2300FBB032 /* Persistance */,
 				8A0D781A2EF3786D008BADF2 /* RunningFromPuppies */,
 				8A0D78192EF3786D008BADF2 /* Products */,
 			);
@@ -124,6 +137,8 @@
 			isa = PBXGroup;
 			children = (
 				8A0D781D2EF3786D008BADF2 /* ContentView.swift */,
+				8AAFC6EB2F2503A100066200 /* LeaderboardsView.swift */,
+				8AAFC6ED2F2503C700066200 /* SettingsView.swift */,
 				8A0D784C2EF756B2008BADF2 /* StartScreenView.swift */,
 				8A0D784E2EF756EC008BADF2 /* GameHostView.swift */,
 			);
@@ -177,6 +192,14 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		8A126BFC2F26927C00DCE03F /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				8A126BFD2F26929A00DCE03F /* CloudKitLeaderboardService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -194,6 +217,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				8A0D781A2EF3786D008BADF2 /* RunningFromPuppies */,
+				8ACD42432F256A2300FBB032 /* Persistance */,
 			);
 			name = RunningFromPuppies;
 			packageProductDependencies = (
@@ -252,12 +276,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8AAFC6EE2F2503C700066200 /* SettingsView.swift in Sources */,
+				8A126BFE2F26929A00DCE03F /* CloudKitLeaderboardService.swift in Sources */,
 				8A0D783F2EF44CB0008BADF2 /* DebugLog.swift in Sources */,
 				8A0D783B2EF44C71008BADF2 /* GameCoreEngine.swift in Sources */,
 				8A0D78392EF44C61008BADF2 /* InputEvent.swift in Sources */,
 				8A0D781E2EF3786D008BADF2 /* ContentView.swift in Sources */,
 				8A0D78492EF44F0F008BADF2 /* GameScene.swift in Sources */,
 				8A0D784B2EF4641E008BADF2 /* SwipeInputCollector.swift in Sources */,
+				8AAFC6EC2F2503A100066200 /* LeaderboardsView.swift in Sources */,
 				8A0D784F2EF756EC008BADF2 /* GameHostView.swift in Sources */,
 				8A0D783D2EF44C9A008BADF2 /* FixedStepDriver.swift in Sources */,
 				8A0D784D2EF756B2008BADF2 /* StartScreenView.swift in Sources */,

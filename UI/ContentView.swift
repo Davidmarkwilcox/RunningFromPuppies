@@ -1,7 +1,12 @@
 // File: ContentView.swift
 // UI
 // Root router for Running from Puppies.
-// Shows the StartScreenView initially, then transitions to GameHostView when Play is tapped.
+// Shows the StartScreenView initially (wrapped in a NavigationStack for toolbars/navigation),
+// then transitions to GameHostView when Play is tapped.
+//
+// Interactions:
+// - StartScreenView drives isPlaying via binding.
+// - GameHostView posts .runningFromPuppiesQuitRequested to return to the start screen.
 //
 // Section 1: Imports
 
@@ -23,10 +28,13 @@ struct ContentView: View {
             if isPlaying {
                 GameHostView(engine: engine, activePlayerId: activePlayerId)
             } else {
-                StartScreenView(
-                    activePlayerId: $activePlayerId,
-                    isPlaying: $isPlaying
-                )
+                // Section 5: Navigation shell for non-game screens (Leaderboards / Settings)
+                NavigationStack {
+                    StartScreenView(
+                        activePlayerId: $activePlayerId,
+                        isPlaying: $isPlaying
+                    )
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .runningFromPuppiesQuitRequested)) { _ in

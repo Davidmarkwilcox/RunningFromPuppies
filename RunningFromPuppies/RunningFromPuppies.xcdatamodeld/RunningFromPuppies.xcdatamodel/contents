@@ -1,9 +1,23 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="1" systemVersion="11A491" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithCloudKit="true" userDefinedModelVersionIdentifier="">
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24512" systemVersion="24G419" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithCloudKit="YES" userDefinedModelVersionIdentifier="">
     <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
         <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
-    <elements>
-        <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
-    </elements>
+    <entity name="ScoreEntry" representedClassName="ScoreEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="durationSeconds" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="endedAt" attributeType="Date" defaultDateTimeInterval="790983480" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="levelNumber" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="playerId" attributeType="String" defaultValueString="&quot;&quot;"/>
+        <attribute name="rulesetVersion" attributeType="String" defaultValueString=""/>
+        <attribute name="score" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <fetchIndex name="byPlayerLevelRuleset">
+            <fetchIndexElement property="playerId" type="Binary" order="ascending"/>
+            <fetchIndexElement property="levelNumber" type="Binary" order="ascending"/>
+            <fetchIndexElement property="rulesetVersion" type="Binary" order="ascending"/>
+        </fetchIndex>
+        <fetchIndex name="byScore">
+            <fetchIndexElement property="score" type="Binary" order="descending"/>
+        </fetchIndex>
+    </entity>
 </model>
