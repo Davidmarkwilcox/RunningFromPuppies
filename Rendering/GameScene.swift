@@ -1,5 +1,5 @@
 // File: GameScene.swift
-// GameScene_20260106-1700.swift
+// GameScene_20260125-1620.swift
 // Purpose: SpriteKit renderer that consumes immutable GameState snapshots and renders the world (rooms + player + puppy + HUD).
 //          Rendering must never mutate GameCore state. Input is emitted as InputEvents via callbacks.
 //
@@ -119,7 +119,7 @@ final class GameScene: SKScene {
 
     // Section 3.3: Rooms (3-room recycler; each room is a single 1536x1024 background image: Room_<RoomId>)
     private let roomsNode = SKNode()
-    private let roomTileCount = 3
+    private let roomTileCount = 5
     private var roomTiles: [RoomTile] = []
 
     // -------------------------------------------------------------------------
@@ -142,7 +142,7 @@ final class GameScene: SKScene {
         roomsNode.zPosition = -100
         addChild(roomsNode)
 
-        // Create 3 reusable room tiles (prev, current, next).
+        // Create 5 reusable room tiles (prev2, prev1, current, next1, next2).
         roomTiles = (0..<roomTileCount).map { i in
             let container = SKNode()
             container.name = "roomTileContainer_\(i)"
@@ -495,31 +495,59 @@ let tappedPlayer = hitNodes.contains { node in
         let count = ids.count
         let currentIndex = max(0, min(state.currentRoomIndex, count - 1))
 
+        // We render two rooms behind and two rooms ahead of the current room to ensure full screen coverage,
+        // even during fast motion or discrete room-origin/width updates.
         let currentRoomId = ids[currentIndex]
         let currentWidth = widths[currentIndex]
 
-        let prevIndex = (currentIndex - 1 + count) % count
-        let nextIndex = (currentIndex + 1) % count
+        let prev1Index = (currentIndex - 1 + count) % count
+        let prev2Index = (currentIndex - 2 + count) % count
+        let next1Index = (currentIndex + 1) % count
+        let next2Index = (currentIndex + 2) % count
 
-        let prevRoomId = ids[prevIndex]
-        let nextRoomId = ids[nextIndex]
+        let prev1RoomId = ids[prev1Index]
+        let prev2RoomId = ids[prev2Index]
+        let next1RoomId = ids[next1Index]
+        let next2RoomId = ids[next2Index]
 
-        let prevWidth = widths[prevIndex]
-        let nextWidth = widths[nextIndex]
+        let prev1Width = widths[prev1Index]
+        let prev2Width = widths[prev2Index]
+        let next1Width = widths[next1Index]
+        let next2Width = widths[next2Index]
 
         let currentOriginX = state.currentRoomOriginX
-        let prevOriginX = currentOriginX - prevWidth
-        let nextOriginX = currentOriginX + currentWidth
+        let prev1OriginX = currentOriginX - prev1Width
+        let prev2OriginX = prev1OriginX - prev2Width
+        let next1OriginX = currentOriginX + currentWidth
+        let next2OriginX = next1OriginX + next1Width
 
-        let prevScreenX = prevOriginX - state.cameraX
+        let prev2ScreenX = prev2OriginX - state.cameraX
+        let prev1ScreenX = prev1OriginX - state.cameraX
         let currentScreenX = currentOriginX - state.cameraX
-        let nextScreenX = nextOriginX - state.cameraX
+        let next1ScreenX = next1OriginX - state.cameraX
+        let next2ScreenX = next2OriginX - state.cameraX
 
         let h = size.height
 
-        layoutRoomTile(tileIndex: 0, roomId: prevRoomId, screenOriginX: prevScreenX, roomWidth: prevWidth, height: h)
-        layoutRoomTile(tileIndex: 1, roomId: currentRoomId, screenOriginX: currentScreenX, roomWidth: currentWidth, height: h)
-        layoutRoomTile(tileIndex: 2, roomId: nextRoomId, screenOriginX: nextScreenX, roomWidth: nextWidth, height: h)
+        layoutRoomTile(tileIndex: 0, roomId: prev2RoomId, screenOriginX: prev2ScreenX, roomWidth: prev2Width, height: h)
+        layoutRoomTile(tileIndex: 1, roomId: prev1RoomId, screenOriginX: prev1ScreenX, roomWidth: prev1Width, height: h)
+        layoutRoomTile(tileIndex: 2, roomId: currentRoomId, screenOriginX: currentScreenX, roomWidth: currentWidth, height: h)
+        layoutRoomTile(tileIndex: 3, roomId: next1RoomId, screenOriginX: next1ScreenX, roomWidth: next1Width, height: h)
+        layoutRoomTile(tileIndex: 4, roomId: next2RoomId, screenOriginX: next2ScreenX, roomWidth: next2Width, height: h)
+
+        if DebugLog.isEnabled {
+            // Coverage check in screen space: ensure background tiles span at least the visible scene width.
+            let leftMost = min(prev2ScreenX, prev1ScreenX, currentScreenX, next1ScreenX, next2ScreenX)
+            let rightMost = max(
+                prev2ScreenX + prev2Width,
+                prev1ScreenX + prev1Width,
+                currentScreenX + currentWidth,
+                next1ScreenX + next1Width,
+                next2ScreenX + next2Width
+            )
+            DebugLog.log(String(format: "Rooms coverage: [%.1f, %.1f] vs scene [0, %.1f] (cameraX=%.1f currentOriginX=%.1f idx=%d)",
+                                leftMost, rightMost, Double(size.width), state.cameraX, currentOriginX, currentIndex))
+        }
     }
 
     private func layoutRoomTile(tileIndex: Int, roomId: String, screenOriginX: Double, roomWidth: Double, height: Double) {
