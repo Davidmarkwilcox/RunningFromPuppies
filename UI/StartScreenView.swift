@@ -27,10 +27,22 @@ struct StartScreenView: View {
     // Section 2.3: Bindings
     @Binding var activePlayerId: String
     @Binding var isPlaying: Bool
+    @Binding var startingLevel: Int
 
     // Section 2.4: Player list (playable characters)
     // NOTE: Intentionally code-defined for now. Later, we can make this manifest-driven.
     private let playerIds: [String] = ["Finley", "Sophia", "Isabella", "Charlotte"]
+
+    // Section 2.5: Level list (starting level selection)
+    // v1: Level 1–5 map to puppies: Lilly, Molly, Sadie, Violet, Georgia.
+    private let levelOptions: [(level: Int, label: String)] = [
+        (1, "Level 1 – Lilly"),
+        (2, "Level 2 – Molly"),
+        (3, "Level 3 – Sadie"),
+        (4, "Level 4 – Violet"),
+        (5, "Level 5 – Georgia")
+    ]
+
 
     // Section 3: Body
 
@@ -76,6 +88,28 @@ struct StartScreenView: View {
                     .background(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                
+                // Section 3.4.1: Starting level picker
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Starting Level")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.95))
+
+                    Picker("Starting Level", selection: $startingLevel) {
+                        ForEach(levelOptions, id: \.level) { opt in
+                            Text(opt.label).tag(opt.level)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.black)
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .padding(.horizontal, 24)
+
                 .padding(.horizontal, 24)
 
                 // Section 3.5: Play button

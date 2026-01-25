@@ -40,6 +40,7 @@ struct GameHostView: View {
     // Section 2: Dependencies (engine is a reference type; SwiftUI does not need to observe it)
     private let engine: GameCoreEngine
     let initialActivePlayerId: String
+    let startingLevel: Int
 
     // Section 2.1: Runtime-owned state
     @State private var driver: FixedStepDriver? = nil
@@ -59,6 +60,7 @@ struct GameHostView: View {
     // by checking for the presence of "<Id>_idle" in the bundle.
     private let candidatePlayerIds: [String] = ["Finley", "Sophia", "Isabella", "Charlotte"]
     @State private var selectedPlayerId: String = "Finley"
+    @State private var isShowingCharacterPickerDialog: Bool = false
 
     // Section 2.1.1.1: Active run player (immutable for the current run)
     // We allow selecting a different character *for the next run/level* via the post-capture UI.
@@ -99,9 +101,10 @@ struct GameHostView: View {
     // Section 2.3: Player list helpers (UI-only)
     private func availablePlayerIds() -> [String] { candidatePlayerIds }
 
-    init(engine: GameCoreEngine, activePlayerId: String) {
+    init(engine: GameCoreEngine, activePlayerId: String, startingLevel: Int) {
         self.engine = engine
         self.initialActivePlayerId = activePlayerId
+        self.startingLevel = startingLevel
         _selectedPlayerId = State(initialValue: activePlayerId)
         _activeRunPlayerId = State(initialValue: activePlayerId)
     }
@@ -174,20 +177,34 @@ struct GameHostView: View {
                         .modifier(PostCapturePrimaryControlModifier())
 
                         // Row 2: Character selection (under Play Again)
-                        // Implemented as a Menu so it can share the same primary visual styling.
-                        Menu {
-                            ForEach(availablePlayerIds(), id: \.self) { id in
-                                Button(action: {
-                                    selectedPlayerId = id
-                                }) {
-                                    Text(id)
-                                }
+                        Button(action: {
+                            isShowingCharacterPickerDialog = true
+                        }) {
+                            HStack(spacing: 8) {
+                                Text("Character: \(selectedPlayerId)")
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 16, weight: .bold))
                             }
-                        } label: {
-                            Text("Character: \(selectedPlayerId)")
                         }
                         .buttonStyle(.plain)
                         .modifier(PostCapturePrimaryControlModifier())
+                        .confirmationDialog(
+                            "Select Character",
+                            isPresented: $isShowingCharacterPickerDialog,
+                            titleVisibility: .visible
+                        ) {
+                            ForEach(availablePlayerIds(), id: \.self) { id in
+                                Button(id) {
+                                    selectedPlayerId = id
+                                    if DebugLog.isEnabled {
+                                        DebugLog.log("Post-capture character selection changed -> \(id)")
+                                    }
+                                }
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Choose the character to use for Play Again and Next Level.")
+                        }
 
                         // Row 3: Next Level
                         Button(action: {
@@ -307,7 +324,7 @@ struct GameHostView: View {
 
         // Reset the engine deterministically back to Level 1 and spawn positions.
         activeRunPlayerId = selectedPlayerId
-        engine.resetRun(activePlayerId: activeRunPlayerId)
+        engine.resetRun(activePlayerId: activeRunPlayerId, startingLevel: startingLevel)
 
         // Recreate the scene to discard any lingering SpriteKit node state/actions.
         scene = GameScene()
@@ -520,8 +537,8 @@ struct GameHostView: View {
         // 5.4 Snapshot the selected player for the new run.
         activeRunPlayerId = selectedPlayerId
 
-        // 5.5 Reset the existing engine deterministically (clears score/time, returns to Level 1).
-        engine.resetRun(activePlayerId: activeRunPlayerId)
+        // 5.5 Restart deterministically at the most recently achieved level (clears score/time).
+        engine.restartFromMostRecentLevel(activePlayerId: activeRunPlayerId)
 
         // 5.5 Recreate the scene to reset node actions/animations and caches.
         let freshScene = GameScene()

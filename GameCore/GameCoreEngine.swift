@@ -77,7 +77,7 @@ final class GameCoreEngine {
     // -------------------------------------------------------------------------
     /// Resets the entire run back to Level 1 (score/time cleared).
     /// Runtime should call this for "Play Again" and when changing characters.
-    func resetRun(activePlayerId: String) {
+    func resetRun(activePlayerId: String, startingLevel: Int = 1) {
         // Preserve view sizing fields owned by the runtime.
         let preservedViewWidth = state.viewWidth
         let preservedViewHeight = state.viewHeight
@@ -87,8 +87,9 @@ final class GameCoreEngine {
         // viewContentScale is runtime-owned but room sizing uses points; keep default 1.0 on reset for determinism.
         state.viewContentScale = 1.0
 
-        state.currentLevel = 1
-        state.activePuppyId = puppyId(forLevel: 1)
+        let clampedStartLevel = max(1, min(startingLevel, puppyOrder.count))
+        state.currentLevel = clampedStartLevel
+        state.activePuppyId = puppyId(forLevel: clampedStartLevel)
         state.levelBannerTimeRemaining = levelBannerDuration
         state.activePlayerId = activePlayerId
 
@@ -101,6 +102,56 @@ final class GameCoreEngine {
             DebugLog.log("GameCoreEngine.resetRun(activePlayerId=\(activePlayerId)) -> Level 1 (\(state.activePuppyId))")
         }
     }
+
+    /// Restarts a run at the most recently achieved level (score/time cleared).
+    /// Runtime should call this for "Play Again" when the player wants to retry the current level
+    /// without going back to Level 1.
+    func restartFromMostRecentLevel(activePlayerId: String) {
+        // Preserve view sizing fields owned by the runtime.
+        let preservedViewWidth = state.viewWidth
+        let preservedViewHeight = state.viewHeight
+
+        // Preserve the most recently achieved level (clamped to valid range).
+        let preservedLevel = min(max(state.currentLevel, 1), state.maxLevel)
+
+        state = GameState()
+        state.viewWidth = preservedViewWidth
+        state.viewHeight = preservedViewHeight
+        // viewContentScale is runtime-owned but room sizing uses points; keep default 1.0 on reset for determinism.
+        state.viewContentScale = 1.0
+
+        // Restart at the preserved level, but clear cumulative metrics.
+        state.currentLevel = preservedLevel
+        state.activePuppyId = puppyId(forLevel: preservedLevel)
+        state.levelBannerTimeRemaining = levelBannerDuration
+        state.activePlayerId = activePlayerId
+
+        state.score = 0
+        state.scoreRemainder = 0.0
+        state.elapsedTime = 0.0
+        state.elapsedLevelTime = 0.0
+
+        // Clear capture/phase state
+        state.runPhase = .playing
+        state.postCaptureTime = 0.0
+        state.didJustCaptureThisTick = false
+
+        // Ensure puppy will re-spawn deterministically.
+        state.puppyHasSpawnedThisLevel = false
+        state.puppyDecisionTimeRemaining = 0.0
+        state.puppyDecisionMode = 0
+        state.puppyJumpCooldownTimeRemaining = 0.0
+
+        // Georgia cute-pull timers are level-scoped; reset on restart.
+        state.georgiaCutePullCooldownRemaining = 0.0
+        state.georgiaCutePullTimeRemaining = 0.0
+        state.georgiaCutePullConfiguredDuration = georgiaCutePullDuration
+
+        if DebugLog.isEnabled {
+            DebugLog.log("GameCoreEngine.restartFromMostRecentLevel(activePlayerId=\(activePlayerId)) -> Level \(state.currentLevel) (\(state.activePuppyId)) score reset to 0")
+        }
+    }
+
 
     /// Advances to the next level while preserving score and overall elapsedTime.
     /// Called automatically after capture to keep the run going (survival scoring).

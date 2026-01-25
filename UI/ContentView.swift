@@ -15,6 +15,7 @@ import SwiftUI
 struct ContentView: View {
     // Section 2: Persistent selection (defaults to Finley)
     @AppStorage("activePlayerId") private var activePlayerId: String = "Finley"
+    @AppStorage("startingLevel") private var startingLevel: Int = 1
 
     // Section 3: Router state
     @State private var isPlaying: Bool = false
@@ -26,13 +27,14 @@ struct ContentView: View {
     var body: some View {
         Group {
             if isPlaying {
-                GameHostView(engine: engine, activePlayerId: activePlayerId)
+                GameHostView(engine: engine, activePlayerId: activePlayerId, startingLevel: startingLevel)
             } else {
                 // Section 5: Navigation shell for non-game screens (Leaderboards / Settings)
                 NavigationStack {
                     StartScreenView(
                         activePlayerId: $activePlayerId,
-                        isPlaying: $isPlaying
+                        isPlaying: $isPlaying,
+                        startingLevel: $startingLevel
                     )
                 }
             }
